@@ -1,12 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
-  PieChart, Pie, Cell 
-} from 'recharts';
-import { Package, TrendingUp, CheckCircle, AlertCircle, UploadCloud, FileSpreadsheet } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, AlertCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
-
-const COLORS = ['#0ea5e9', '#6366f1', '#10b981', '#f59e0b', '#ef4444'];
 
 export interface ProductionOrder {
   id: string;
@@ -25,6 +19,9 @@ export interface ProductionOrder {
   planDelDate: string;
   weekNo: string;
   coQty: number;
+  cumSewInQty: number;
+  cumSewOutQty: number;
+  cumSewOutRejQty: number;
   deliveredQty: number;
   orderToShippedPct: number;
 }
@@ -116,6 +113,9 @@ export function Dashboard() {
               planDelDate: planDelDate,
               weekNo: weekNo,
               coQty: Number(row['CO Qty']) || 0,
+              cumSewInQty: Number(row['Cum Sew In Qty']) || 0,
+              cumSewOutQty: Number(row['Cum SewOut Qty']) || 0,
+              cumSewOutRejQty: Number(row['Cum Sew Out Rej Qty']) || 0,
               deliveredQty: Number(row['Delivered Qty']) || 0,
               orderToShippedPct: Number(row['Order to shipped %']) || 0,
             };
@@ -196,34 +196,6 @@ export function Dashboard() {
     );
   }
 
-  const totalOrdered = data.reduce((acc, curr) => acc + curr.coQty, 0);
-  const totalDelivered = data.reduce((acc, curr) => acc + curr.deliveredQty, 0);
-  const overallFulfillment = totalOrdered ? ((totalDelivered / totalOrdered) * 100).toFixed(2) : "0.00";
-  
-  const shortShippedItems = data.filter(item => item.orderToShippedPct < 100).length;
-
-  const aggregatedByStyle = data.reduce((acc, curr) => {
-    const baseStyle = curr.styleNo.split('-')[0];
-    if (!acc[baseStyle]) {
-      acc[baseStyle] = { styleNo: baseStyle, coQty: 0, deliveredQty: 0 };
-    }
-    acc[baseStyle].coQty += curr.coQty;
-    acc[baseStyle].deliveredQty += curr.deliveredQty;
-    return acc;
-  }, {} as Record<string, { styleNo: string, coQty: number, deliveredQty: number }>);
-  
-  const chartDataStyle = Object.values(aggregatedByStyle);
-
-  const aggregatedByBuyer = data.reduce((acc, curr) => {
-    if (!acc[curr.buyer]) {
-      acc[curr.buyer] = { buyer: curr.buyer, qty: 0 };
-    }
-    acc[curr.buyer].qty += curr.coQty;
-    return acc;
-  }, {} as Record<string, { buyer: string, qty: number }>);
-
-  const chartDataBuyer = Object.values(aggregatedByBuyer);
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-6 md:p-10">
       <div className="max-w-7xl mx-auto space-y-8">
@@ -231,7 +203,7 @@ export function Dashboard() {
         <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">Production Overview</h1>
-            <p className="text-slate-500 mt-2">Visualizing order quantities, delivery status, and fulfillment efficiency.</p>
+            <p className="text-slate-500 mt-2">Visualizing item-level fulfillment details.</p>
           </div>
           <button 
             onClick={() => setData(null)}
@@ -242,98 +214,13 @@ export function Dashboard() {
           </button>
         </header>
 
-        {/* Metrics Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <MetricCard 
-            title="Total Ordered Qty" 
-            value={totalOrdered.toLocaleString()} 
-            icon={<Package className="w-5 h-5 text-blue-500" />}
-          />
-          <MetricCard 
-            title="Total Delivered Qty" 
-            value={totalDelivered.toLocaleString()} 
-            icon={<CheckCircle className="w-5 h-5 text-emerald-500" />}
-          />
-          <MetricCard 
-            title="Overall Fulfillment" 
-            value={`${overallFulfillment}%`} 
-            icon={<TrendingUp className="w-5 h-5 text-indigo-500" />}
-          />
-          <MetricCard 
-            title="Short Shipped Orders" 
-            value={shortShippedItems.toString()} 
-            icon={<AlertCircle className="w-5 h-5 text-rose-500" />}
-          />
-        </div>
-
-        {/* Main Charts Area */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-            <div className="mb-6">
-              <h2 className="text-lg font-semibold text-slate-800">Order vs. Delivered by Style</h2>
-              <p className="text-sm text-slate-500">Comparison of Customer Order (CO) Qty and Delivered Qty</p>
-            </div>
-            <div className="h-[400px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={chartDataStyle}
-                  margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="styleNo" axisLine={false} tickLine={false} tick={{ fill: '#64748b' }} dy={10} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b' }} />
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                    cursor={{ fill: '#f1f5f9' }}
-                  />
-                  <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                  <Bar dataKey="coQty" name="Ordered Qty" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="deliveredQty" name="Delivered Qty" fill="#10b981" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 flex flex-col">
-            <div className="mb-2">
-              <h2 className="text-lg font-semibold text-slate-800">Order Distribution</h2>
-              <p className="text-sm text-slate-500">Total Volume by Buyer</p>
-            </div>
-            <div className="h-[350px] w-full flex-1 mt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={chartDataBuyer}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={70}
-                    outerRadius={110}
-                    paddingAngle={5}
-                    dataKey="qty"
-                    nameKey="buyer"
-                  >
-                    {chartDataBuyer.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  />
-                  <Legend verticalAlign="bottom" height={36} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-
         {/* Detailed Data Table */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="p-6 border-b border-slate-200">
             <h2 className="text-lg font-semibold text-slate-800">Fulfillment Details</h2>
             <p className="text-sm text-slate-500">Item-level breakdown of the uploaded dataset.</p>
           </div>
-          <div className="overflow-x-auto max-h-[500px]">
+          <div className="overflow-x-auto max-h-[70vh]">
             <table className="w-full text-sm text-left relative">
               <thead className="text-xs text-slate-500 uppercase bg-slate-50/90 border-b border-slate-200 sticky top-0 backdrop-blur-sm">
                 <tr>
@@ -352,6 +239,9 @@ export function Dashboard() {
                   <th className="px-4 py-4 font-medium whitespace-nowrap">Plan Del Date</th>
                   <th className="px-4 py-4 font-medium whitespace-nowrap text-center">WEEK NO</th>
                   <th className="px-4 py-4 font-medium whitespace-nowrap text-right">CO Qty</th>
+                  <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Cum Sew In Qty</th>
+                  <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Cum SewOut Qty</th>
+                  <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Cum Sew Out Rej Qty</th>
                   <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Delivered Qty</th>
                 </tr>
               </thead>
@@ -373,6 +263,9 @@ export function Dashboard() {
                     <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.planDelDate}</td>
                     <td className="px-4 py-4 text-slate-700 whitespace-nowrap text-center">{row.weekNo}</td>
                     <td className="px-4 py-4 text-right font-medium text-slate-900 whitespace-nowrap">{row.coQty.toLocaleString()}</td>
+                    <td className="px-4 py-4 text-right text-slate-700 whitespace-nowrap">{row.cumSewInQty.toLocaleString()}</td>
+                    <td className="px-4 py-4 text-right text-slate-700 whitespace-nowrap">{row.cumSewOutQty.toLocaleString()}</td>
+                    <td className="px-4 py-4 text-right text-slate-700 whitespace-nowrap">{row.cumSewOutRejQty.toLocaleString()}</td>
                     <td className="px-4 py-4 text-right font-medium text-slate-900 whitespace-nowrap">{row.deliveredQty.toLocaleString()}</td>
                   </tr>
                 ))}
@@ -381,20 +274,6 @@ export function Dashboard() {
           </div>
         </div>
 
-      </div>
-    </div>
-  );
-}
-
-function MetricCard({ title, value, icon }: { title: string, value: string, icon: React.ReactNode }) {
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex items-center justify-between">
-      <div>
-        <p className="text-sm font-medium text-slate-500 mb-1">{title}</p>
-        <p className="text-2xl font-bold text-slate-900">{value}</p>
-      </div>
-      <div className="p-3 bg-slate-50 rounded-xl">
-        {icon}
       </div>
     </div>
   );
