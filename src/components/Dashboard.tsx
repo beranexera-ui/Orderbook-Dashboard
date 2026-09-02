@@ -1,5 +1,5 @@
-import React, { useState, useRef, useCallback } from 'react';
-import { UploadCloud, FileSpreadsheet, AlertCircle } from 'lucide-react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
+import { UploadCloud, FileSpreadsheet, AlertCircle, Search, ChevronLeft, ChevronRight, Package, CheckCircle, TrendingUp, AlertTriangle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 export interface ProductionOrder {
@@ -31,8 +31,19 @@ export function Dashboard() {
   const [data, setData] = useState<ProductionOrder[] | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
   const [error, setError] = useState<string | null>(null);
+
+  // Filters State
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterBuyer, setFilterBuyer] = useState('');
+  const [filterWeekNo, setFilterWeekNo] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterShipmentMode, setFilterShipmentMode] = useState('');
+  const [filterDestination, setFilterDestination] = useState('');
+  
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 50;
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -61,14 +72,13 @@ export function Dashboard() {
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           
-          // Get start of current week (assuming Monday)
           const dayOfWeek = today.getDay();
           const diffToMonday = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
           const startOfCurrentWeek = new Date(today);
           startOfCurrentWeek.setDate(diffToMonday);
 
           const endOf6Weeks = new Date(startOfCurrentWeek);
-          endOf6Weeks.setDate(startOfCurrentWeek.getDate() + 42); // 6 weeks from start of this week
+          endOf6Weeks.setDate(startOfCurrentWeek.getDate() + 42);
           
           const filteredData = jsonData.filter((row: any) => {
             const warehouse = String(row['Prod Warehouse'] || '').trim().toUpperCase();
@@ -102,7 +112,6 @@ export function Dashboard() {
               
             let weekNo = String(row['WEEK NO'] || '');
             
-            // Auto-generate WEEK NO from YYYYMMDD if missing
             if (!weekNo && rawPlanDelDate.length === 8) {
               const year = parseInt(rawPlanDelDate.substring(0, 4));
               const month = parseInt(rawPlanDelDate.substring(4, 6)) - 1;
@@ -145,7 +154,20 @@ export function Dashboard() {
             };
           });
 
+          // Sort by Plan Del Date
+          parsedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
+
           setData(parsedData);
+          
+          // Reset states on new upload
+          setSearchTerm('');
+          setFilterBuyer('');
+          setFilterWeekNo('');
+          setFilterStatus('');
+          setFilterShipmentMode('');
+          setFilterDestination('');
+          setCurrentPage(1);
+
         } catch (err: any) {
           console.error("Error parsing Excel file", err);
           if (err.message && err.message.includes("Encrypted file")) {
@@ -179,6 +201,68 @@ export function Dashboard() {
       alert("Please upload a valid Excel or CSV file.");
     }
   }, []);
+
+  // Filter Data
+  const filteredItems = useMemo(() => {
+    if (!data) return [];
+    
+    return data.filter(item => {
+      const matchesSearch = searchTerm === '' || 
+        Object.values(item).some(val => 
+          String(val).toLowerCase().includes(searchTerm.toLowerCase())
+        );
+      
+      const matchesBuyer = filterBuyer === '' || item.buyer === filterBuyer;
+      const matchesWeek = filterWeekNo === '' || item.weekNo === filterWeekNo;
+      
+      // Status matching logic (Completed vs Pending)
+      const isItemCompleted = item.statusText === 'Completed';
+      const matchesStatus = filterStatus === '' || 
+        (filterStatus === 'Completed' ? isItemCompleted : (filterStatus === 'Pending' ? !isItemCompleted : true));
+        
+      const matchesShipmentMode = filterShipmentMode === '' || item.shipmentMode === filterShipmentMode;
+      const matchesDestination = filterDestination === '' || item.destination === filterDestination;
+
+      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination;
+    });
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination]);
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / itemsPerPage));
+  const paginatedData = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredItems.slice(start, start + itemsPerPage);
+  }, [filteredItems, currentPage]);
+
+  // Effect to reset page when filters change
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination]);
+
+  // Unique values for dropdowns
+  const uniqueBuyers = useMemo(() => Array.from(new Set(data?.map(d => d.buyer))).filter(Boolean).sort(), [data]);
+  const uniqueWeeks = useMemo(() => Array.from(new Set(data?.map(d => d.weekNo))).filter(Boolean).sort((a,b) => Number(a) - Number(b)), [data]);
+  const uniqueShipmentModes = useMemo(() => Array.from(new Set(data?.map(d => d.shipmentMode))).filter(Boolean).sort(), [data]);
+  const uniqueDestinations = useMemo(() => Array.from(new Set(data?.map(d => d.destination))).filter(Boolean).sort(), [data]);
+
+  // Summary Metrics
+  const summary = useMemo(() => {
+    let coQty = 0;
+    let pendingQty = 0;
+    let completedCount = 0;
+    
+    filteredItems.forEach(item => {
+      coQty += item.coQty;
+      if (item.statusText !== 'Completed') {
+        pendingQty += (item.coQty - item.cumSewOutQty);
+      } else {
+        completedCount += 1;
+      }
+    });
+
+    return { totalOrders: filteredItems.length, coQty, pendingQty, completedCount };
+  }, [filteredItems]);
+
 
   if (!data) {
     return (
@@ -221,92 +305,203 @@ export function Dashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-6 md:p-10">
-      <div className="max-w-7xl mx-auto space-y-8">
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-4 md:p-8">
+      <div className="mx-auto space-y-6" style={{ maxWidth: '1600px' }}>
         
-        <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900">Production Overview</h1>
-            <p className="text-slate-500 mt-2">Visualizing item-level fulfillment details.</p>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Production Overview</h1>
+            <p className="text-slate-500 mt-1">Item-level fulfillment details for the next 6 weeks.</p>
           </div>
           <button 
             onClick={() => setData(null)}
-            className="inline-flex items-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-colors cursor-pointer"
+            className="inline-flex items-center px-4 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-medium hover:bg-slate-800 shadow-sm transition-colors cursor-pointer"
           >
             <UploadCloud className="w-4 h-4 mr-2" />
             Upload New File
           </button>
         </header>
 
-        {/* Detailed Data Table */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-slate-200">
-            <h2 className="text-lg font-semibold text-slate-800">Fulfillment Details</h2>
-            <p className="text-sm text-slate-500">Item-level breakdown of the uploaded dataset.</p>
+        {/* Summary Metrics */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <MetricCard title="Total Filtered Orders" value={summary.totalOrders.toString()} icon={<Package className="w-5 h-5 text-blue-500" />} />
+          <MetricCard title="Total CO Qty" value={summary.coQty.toLocaleString()} icon={<TrendingUp className="w-5 h-5 text-indigo-500" />} />
+          <MetricCard title="Total Pending Qty" value={summary.pendingQty.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} />
+          <MetricCard title="Completed Orders" value={summary.completedCount.toString()} icon={<CheckCircle className="w-5 h-5 text-emerald-500" />} />
+        </div>
+
+        {/* Filters and Search Bar */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+          <div className="flex flex-col lg:flex-row gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input 
+                type="text" 
+                placeholder="Search anything (style, color, vpo)..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+              />
+            </div>
+            
+            <div className="flex flex-wrap sm:flex-nowrap gap-3">
+              <select value={filterBuyer} onChange={(e) => setFilterBuyer(e.target.value)} className="flex-1 sm:w-auto py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
+                <option value="">All Buyers</option>
+                {uniqueBuyers.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+              
+              <select value={filterWeekNo} onChange={(e) => setFilterWeekNo(e.target.value)} className="flex-1 sm:w-auto py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
+                <option value="">All Weeks</option>
+                {uniqueWeeks.map(w => <option key={w} value={w}>Week {w}</option>)}
+              </select>
+
+              <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="flex-1 sm:w-auto py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
+                <option value="">All Statuses</option>
+                <option value="Completed">Completed</option>
+                <option value="Pending">Pending</option>
+              </select>
+            </div>
           </div>
-          <div className="overflow-x-auto max-h-[70vh]">
-            <table className="w-full text-sm text-left relative">
-              <thead className="text-xs text-slate-500 uppercase bg-slate-50/90 border-b border-slate-200 sticky top-0 backdrop-blur-sm">
-                <tr>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Buyer</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Group Tech Class</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Buyer Division Name</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Style No</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Cust Style No</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">VPO No</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Shipment Mode</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Color Code</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Color Name</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Destination</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Pack Method</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Schedule No</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap">Plan Del Date</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap text-center">WEEK NO</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap text-right">CO Qty</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Cum Sew In Qty</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Cum SewOut Qty</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Status</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Cum Sew Out Rej Qty</th>
-                  <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Delivered Qty</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {data.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.buyer}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.groupTechClass}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.buyerDivisionName}</td>
-                    <td className="px-4 py-4 font-medium text-slate-900 whitespace-nowrap">{row.styleNo}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.custStyleNo}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.vpoNo}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.shipmentMode}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.colorCode}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.colorName}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.destination}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap truncate max-w-[200px]" title={row.packMethod}>{row.packMethod}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.scheduleNo}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap">{row.planDelDate}</td>
-                    <td className="px-4 py-4 text-slate-700 whitespace-nowrap text-center">{row.weekNo}</td>
-                    <td className="px-4 py-4 text-right font-medium text-slate-900 whitespace-nowrap">{row.coQty.toLocaleString()}</td>
-                    <td className="px-4 py-4 text-right text-slate-700 whitespace-nowrap">{row.cumSewInQty.toLocaleString()}</td>
-                    <td className="px-4 py-4 text-right text-slate-700 whitespace-nowrap">{row.cumSewOutQty.toLocaleString()}</td>
-                    <td className="px-4 py-4 text-right whitespace-nowrap">
-                      <span className={cn(
-                        "inline-flex items-center px-2.5 py-0.5 rounded-full font-medium text-xs",
-                        row.statusText === 'Completed' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
-                      )}>
-                        {row.statusText}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4 text-right text-slate-700 whitespace-nowrap">{row.cumSewOutRejQty.toLocaleString()}</td>
-                    <td className="px-4 py-4 text-right font-medium text-slate-900 whitespace-nowrap">{row.deliveredQty.toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+
+          <div className="flex flex-col sm:flex-row gap-4 items-center">
+            <select value={filterShipmentMode} onChange={(e) => setFilterShipmentMode(e.target.value)} className="w-full sm:flex-1 py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
+              <option value="">All Shipment Modes</option>
+              {uniqueShipmentModes.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            
+            <select value={filterDestination} onChange={(e) => setFilterDestination(e.target.value)} className="w-full sm:flex-1 py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
+              <option value="">All Destinations</option>
+              {uniqueDestinations.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+            
+            <button 
+              onClick={() => {
+                setSearchTerm(''); setFilterBuyer(''); setFilterWeekNo(''); setFilterStatus(''); setFilterShipmentMode(''); setFilterDestination('');
+              }}
+              className="w-full sm:w-auto px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-medium transition-colors whitespace-nowrap"
+            >
+              Clear Filters
+            </button>
           </div>
         </div>
 
+        {/* Detailed Data Table */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left border-collapse">
+              <thead className="text-xs text-slate-600 font-semibold bg-slate-100 border-b border-slate-200">
+                <tr>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Plan Del Date</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center">WEEK NO</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Buyer</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Group Tech Class</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Buyer Division Name</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Style No</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Cust Style No</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">VPO No</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Shipment Mode</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Color Code</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Color Name</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Destination</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Pack Method</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Schedule No</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right">CO Qty</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum Sew In Qty</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum SewOut Qty</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum Sew Out Rej</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center">Status</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right">Delivered Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paginatedData.length > 0 ? (
+                  paginatedData.map((row) => (
+                    <tr key={row.id} className="hover:bg-indigo-50/50 transition-colors bg-white">
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.planDelDate}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap text-center font-medium bg-slate-50/50">{row.weekNo}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.buyer}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.groupTechClass}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap truncate max-w-[150px]" title={row.buyerDivisionName}>{row.buyerDivisionName}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 font-medium text-slate-900 whitespace-nowrap">{row.styleNo}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.custStyleNo}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.vpoNo}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.shipmentMode}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.colorCode}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap truncate max-w-[150px]" title={row.colorName}>{row.colorName}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.destination}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap truncate max-w-[150px]" title={row.packMethod}>{row.packMethod}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.scheduleNo}</td>
+                      
+                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.coQty.toLocaleString()}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-right text-slate-600 whitespace-nowrap bg-slate-50/50">{row.cumSewInQty.toLocaleString()}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-indigo-700 whitespace-nowrap bg-slate-50/50">{row.cumSewOutQty.toLocaleString()}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-right text-rose-600 whitespace-nowrap bg-slate-50/50">{row.cumSewOutRejQty.toLocaleString()}</td>
+                      
+                      <td className="px-3 py-2.5 border border-slate-200 text-center whitespace-nowrap">
+                        <span className={cn(
+                          "inline-flex items-center px-2 py-0.5 rounded-full font-medium text-[11px] uppercase tracking-wider",
+                          row.statusText === 'Completed' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"
+                        )}>
+                          {row.statusText}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.deliveredQty.toLocaleString()}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={20} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
+                      No orders found matching the current filters.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="bg-white border-t border-slate-200 p-4 flex items-center justify-between">
+              <p className="text-sm text-slate-500">
+                Showing <span className="font-medium text-slate-900">{filteredItems.length === 0 ? 0 : ((currentPage - 1) * itemsPerPage) + 1}</span> to <span className="font-medium text-slate-900">{Math.min(currentPage * itemsPerPage, filteredItems.length)}</span> of <span className="font-medium text-slate-900">{filteredItems.length}</span> results
+              </p>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <span className="text-sm font-medium text-slate-700 px-3">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
+function MetricCard({ title, value, icon }: { title: string, value: string, icon: React.ReactNode }) {
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex items-center gap-4">
+      <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+        {icon}
+      </div>
+      <div>
+        <p className="text-[11px] font-semibold text-slate-500 mb-0.5 uppercase tracking-wider">{title}</p>
+        <p className="text-2xl font-bold text-slate-900">{value}</p>
       </div>
     </div>
   );
