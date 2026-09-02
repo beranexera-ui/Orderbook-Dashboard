@@ -28,13 +28,16 @@ export interface ProductionOrder {
   statusText: string;
   deliveredQty: number;
   orderToShippedPct: number;
+  remark?: string;
 }
 
 export function Dashboard() {
   const [data, setData] = useState<ProductionOrder[] | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [loadingInitial, setLoadingInitial] = useState(true);
+  const [remarks, setRemarks] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,6 +53,16 @@ export function Dashboard() {
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const unsubRemarks = onSnapshot(collection(db, "remarks"), (snapshot) => {
+      const newRemarks: Record<string, string> = {};
+      snapshot.forEach(doc => {
+        newRemarks[doc.id] = doc.data().text || '';
+      });
+      setRemarks(newRemarks);
+    }, (error) => {
+      console.error("Remarks snapshot error:", error);
+    });
+
     const unsub = onSnapshot(doc(db, "dashboardData", "latest"), async (docSnap) => {
       if (docSnap.exists()) {
         const { currentUploadId } = docSnap.data();
@@ -76,15 +89,28 @@ export function Dashboard() {
       console.error("Snapshot error:", error);
       setLoadingInitial(false);
     });
-    return () => unsub();
+    return () => {
+      unsub();
+      unsubRemarks();
+    };
   }, []);
+
+  const handleRemarkChange = async (id: string, text: string) => {
+    try {
+      await setDoc(doc(db, "remarks", id), { text, updatedAt: Date.now() }, { merge: true });
+    } catch (e) {
+      console.error("Failed to save remark", e);
+    }
+  };
 
   const uploadToFirestore = async (parsedData: ProductionOrder[]) => {
     setIsUploading(true);
+    setUploadProgress({ current: 0, total: parsedData.length });
     try {
       const uploadId = Date.now().toString();
       const batchSize = 400; // max 500 operations per batch
       
+      let processed = 0;
       for (let i = 0; i < parsedData.length; i += batchSize) {
         const chunk = parsedData.slice(i, i + batchSize);
         const batch = writeBatch(db);
@@ -95,6 +121,8 @@ export function Dashboard() {
         });
         
         await batch.commit();
+        processed += chunk.length;
+        setUploadProgress({ current: processed, total: parsedData.length });
       }
 
       await setDoc(doc(db, "dashboardData", "latest"), {
@@ -106,7 +134,10 @@ export function Dashboard() {
       console.error(err);
       alert("Failed to upload data to database.");
     } finally {
-      setIsUploading(false);
+      setTimeout(() => {
+        setIsUploading(false);
+        setUploadProgress({ current: 0, total: 0 });
+      }, 1000);
     }
   };
 
@@ -167,9 +198,12 @@ export function Dashboard() {
               isWithin6Weeks = rowDate >= startOfCurrentWeek && rowDate < endOf6Weeks;
             }
             
-            const hasExcludedTerm = Object.values(row).some(val => 
-              excludedTerms.includes(String(val).trim().toUpperCase())
-            );
+            const hasExcludedTerm = Object.values(row).some(val => {
+              const strVal = String(val).trim().toUpperCase();
+              if (excludedTerms.includes(strVal)) return true;
+              if (/^VPO(_|\d)/.test(strVal)) return true;
+              return false;
+            });
             
             return isERK && isWithin6Weeks && !hasExcludedTerm;
           });
@@ -212,8 +246,20 @@ export function Dashboard() {
               statusText = `Pending - ${pendingQty}`;
             }
 
+            const vpoStr = String(row['VPO No'] || '').trim();
+            const schedStr = String(row['Schedule No'] || '').trim();
+            const styleStr = String(row['Style No'] || '').trim();
+            const colorStr = String(row['Color Code'] || '').trim();
+            const destStr = String(row['Destination'] || '').trim();
+            
+            // Create a safe, stable ID for Firestore
+            const stableId = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}_${planDelDate}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+            
+            // Fallback to index if fields are empty to prevent overwriting
+            const finalId = (stableId === '_____' || !stableId) ? `row_${index}` : stableId;
+
             return {
-              id: index.toString(),
+              id: finalId,
               buyer: row['Buyer'] || '',
               groupTechClass: row['Group Tech Class'] || '',
               buyerDivisionName: row['Buyer Division Name'] || '',
@@ -395,10 +441,19 @@ export function Dashboard() {
           <p className="text-slate-500 mb-8">Upload your Excel (.xlsx) file to instantly generate the production dashboard.</p>
           
           {isUploading ? (
-            <div className="py-8 flex flex-col items-center">
-              <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-4" />
+            <div className="py-8 flex flex-col items-center w-full">
+              <Loader2 className="w-10 h-10 text-indigo-500 animate-spin mb-4" />
               <p className="text-sm font-medium text-slate-700">Uploading data to cloud...</p>
-              <p className="text-xs text-slate-500 mt-1">This may take a moment for large files.</p>
+              
+              <div className="w-full bg-slate-100 rounded-full h-2.5 mt-4 mb-2 overflow-hidden">
+                <div 
+                  className="bg-indigo-500 h-2.5 rounded-full transition-all duration-300 ease-out" 
+                  style={{ width: `${uploadProgress.total > 0 ? Math.round((uploadProgress.current / uploadProgress.total) * 100) : 0}%` }}
+                ></div>
+              </div>
+              <p className="text-xs font-semibold text-slate-500">
+                {uploadProgress.total > 0 ? `${uploadProgress.current} / ${uploadProgress.total} rows` : "Processing..."}
+              </p>
             </div>
           ) : (
             <>
@@ -547,13 +602,14 @@ export function Dashboard() {
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum SewOut Qty</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum Sew Out Rej</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center">Status</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Remark</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right">Delivered Qty</th>
                 </tr>
               </thead>
               <tbody>
                 {paddingTop > 0 && (
                   <tr>
-                    <td colSpan={20} style={{ height: `${paddingTop}px` }}></td>
+                    <td colSpan={21} style={{ height: `${paddingTop}px` }}></td>
                   </tr>
                 )}
                 {virtualRows.length > 0 ? (
@@ -591,20 +647,32 @@ export function Dashboard() {
                           {row.statusText}
                         </span>
                       </td>
+                      <td className="px-3 py-2.5 border border-slate-200 whitespace-nowrap min-w-[200px]">
+                        <input 
+                          type="text" 
+                          value={remarks[row.id] || ''}
+                          onChange={(e) => {
+                            setRemarks(prev => ({ ...prev, [row.id]: e.target.value }));
+                          }}
+                          onBlur={(e) => handleRemarkChange(row.id, e.target.value)}
+                          placeholder="Add remark..."
+                          className="w-full text-sm bg-transparent border-0 border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:ring-0 px-1 py-1 transition-colors"
+                        />
+                      </td>
                       <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.deliveredQty.toLocaleString()}</td>
                       </tr>
                     );
                   })
                 ) : (
                   <tr>
-                    <td colSpan={20} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
+                    <td colSpan={21} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
                       No orders found matching the current filters.
                     </td>
                   </tr>
                 )}
                 {paddingBottom > 0 && (
                   <tr>
-                    <td colSpan={20} style={{ height: `${paddingBottom}px` }}></td>
+                    <td colSpan={21} style={{ height: `${paddingBottom}px` }}></td>
                   </tr>
                 )}
               </tbody>
