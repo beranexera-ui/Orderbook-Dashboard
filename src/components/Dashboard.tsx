@@ -437,7 +437,10 @@ export function Dashboard() {
     return { completedScheduleLines, pendingScheduleLines, completedVPOs, pendingVPOs };
   }, [filteredItems]);
 
-  const handlePrint = () => {
+  const [showPrintModal, setShowPrintModal] = useState(false);
+
+  const executePrint = (orientation: 'portrait' | 'landscape') => {
+    setShowPrintModal(false);
     const iframe = document.createElement('iframe');
     iframe.style.position = 'absolute';
     iframe.style.width = '0px';
@@ -448,6 +451,33 @@ export function Dashboard() {
     const doc = iframe.contentWindow?.document;
     if (!doc) return;
 
+    let tableRowsHTML = '';
+    let prevVPO: string | null = null;
+    
+    filteredItems.forEach((item, index) => {
+      if (index > 0 && item.vpoNo !== prevVPO) {
+        tableRowsHTML += `<tr style="background-color: #1e293b; height: 4px;"><td colspan="13" style="padding: 0; border: none;"></td></tr>`;
+      }
+      prevVPO = item.vpoNo;
+      tableRowsHTML += `
+        <tr>
+          <td>${item.planDelDate || ''}</td>
+          <td>${item.weekNo || ''}</td>
+          <td>${item.buyer || ''}</td>
+          <td>${item.styleNo || ''}</td>
+          <td>${item.vpoNo || ''}</td>
+          <td>${item.shipmentMode || ''}</td>
+          <td>${item.colorCode || ''}</td>
+          <td>${item.colorName || ''}</td>
+          <td>${item.destination || ''}</td>
+          <td>${item.packMethod || ''}</td>
+          <td>${item.scheduleNo || ''}</td>
+          <td>${item.coQty != null ? item.coQty.toLocaleString() : ''}</td>
+          <td>${item.statusText || ''}</td>
+        </tr>
+      `;
+    });
+
     doc.open();
     doc.write(`
       <!DOCTYPE html>
@@ -455,7 +485,7 @@ export function Dashboard() {
       <head>
         <title>Production Data Report</title>
         <style>
-          @page { size: A4 landscape; margin: 10mm; }
+          @page { size: A4 ${orientation}; margin: 10mm; }
           body { 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
             font-size: 8pt; 
@@ -481,10 +511,7 @@ export function Dashboard() {
               <th>Plan Del Date</th>
               <th>WEEK NO</th>
               <th>Buyer</th>
-              <th>Group Tech Class</th>
-              <th>Buyer Division Name</th>
               <th>Style No</th>
-              <th>Cust Style No</th>
               <th>VPO No</th>
               <th>Shipment Mode</th>
               <th>Color Code</th>
@@ -497,26 +524,7 @@ export function Dashboard() {
             </tr>
           </thead>
           <tbody>
-            ${filteredItems.map(item => `
-              <tr>
-                <td>${item.planDelDate || ''}</td>
-                <td>${item.weekNo || ''}</td>
-                <td>${item.buyer || ''}</td>
-                <td>${item.groupTechClass || ''}</td>
-                <td>${item.buyerDivisionName || ''}</td>
-                <td>${item.styleNo || ''}</td>
-                <td>${item.custStyleNo || ''}</td>
-                <td>${item.vpoNo || ''}</td>
-                <td>${item.shipmentMode || ''}</td>
-                <td>${item.colorCode || ''}</td>
-                <td>${item.colorName || ''}</td>
-                <td>${item.destination || ''}</td>
-                <td>${item.packMethod || ''}</td>
-                <td>${item.scheduleNo || ''}</td>
-                <td>${item.coQty != null ? item.coQty.toLocaleString() : ''}</td>
-                <td>${item.statusText || ''}</td>
-              </tr>
-            `).join('')}
+            ${tableRowsHTML}
           </tbody>
         </table>
       </body>
@@ -711,7 +719,7 @@ export function Dashboard() {
               Clear Filters
             </button>
             <button
-              onClick={handlePrint}
+              onClick={() => setShowPrintModal(true)}
               disabled={filteredItems.length === 0}
               className="w-full sm:w-auto px-5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-sm font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-indigo-100"
             >
@@ -759,9 +767,16 @@ export function Dashboard() {
                 {virtualRows.length > 0 ? (
                   virtualRows.map((virtualRow) => {
                     const row = filteredItems[virtualRow.index];
+                    const isNewVpo = virtualRow.index > 0 && filteredItems[virtualRow.index - 1].vpoNo !== row.vpoNo;
                     return (
-                      <tr key={row.id} className="hover:bg-indigo-50/50 transition-colors bg-white">
-                        <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.planDelDate}</td>
+                      <React.Fragment key={row.id}>
+                        {isNewVpo && (
+                          <tr className="bg-slate-800">
+                            <td colSpan={21} className="h-[4px] p-0 border-0"></td>
+                          </tr>
+                        )}
+                        <tr className="hover:bg-indigo-50/50 transition-colors bg-white">
+                          <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.planDelDate}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap text-center font-medium bg-slate-50/50">{row.weekNo}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.buyer}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.groupTechClass}</td>
@@ -805,6 +820,7 @@ export function Dashboard() {
                       </td>
                       <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.deliveredQty.toLocaleString()}</td>
                       </tr>
+                      </React.Fragment>
                     );
                   })
                 ) : (
@@ -825,6 +841,36 @@ export function Dashboard() {
         </div>
 
       </div>
+
+      {/* Print Modal */}
+      {showPrintModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm border border-slate-200">
+            <h3 className="text-lg font-bold text-slate-900 mb-2">Print Options</h3>
+            <p className="text-sm text-slate-500 mb-6">Choose how you want to print the report.</p>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={() => executePrint('portrait')} 
+                className="w-full px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-medium transition-colors text-sm flex items-center justify-center"
+              >
+                Portrait (Kelin Athata)
+              </button>
+              <button 
+                onClick={() => executePrint('landscape')} 
+                className="w-full px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-medium transition-colors text-sm flex items-center justify-center"
+              >
+                Landscape (Harahata)
+              </button>
+              <button 
+                onClick={() => setShowPrintModal(false)} 
+                className="w-full px-4 py-3 mt-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-medium transition-colors text-sm flex items-center justify-center"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
