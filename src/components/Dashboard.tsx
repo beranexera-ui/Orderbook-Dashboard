@@ -125,8 +125,17 @@ export function Dashboard() {
 
             const coQty = Number(row['CO Qty']) || 0;
             const cumSewOutQty = Number(row['Cum SewOut Qty']) || 0;
+            const deliveredQty = Number(row['Delivered Qty']) || 0;
             const pendingQty = coQty - cumSewOutQty;
-            const statusText = cumSewOutQty >= coQty ? 'Completed' : `Pending - ${pendingQty}`;
+            
+            let statusText = '';
+            if (deliveredQty > 0) {
+              statusText = 'Shipped';
+            } else if (cumSewOutQty >= coQty) {
+              statusText = 'Completed';
+            } else {
+              statusText = `Pending - ${pendingQty}`;
+            }
 
             return {
               id: index.toString(),
@@ -215,10 +224,11 @@ export function Dashboard() {
       const matchesBuyer = filterBuyer === '' || item.buyer === filterBuyer;
       const matchesWeek = filterWeekNo === '' || item.weekNo === filterWeekNo;
       
-      // Status matching logic (Completed vs Pending)
-      const isItemCompleted = item.statusText === 'Completed';
+      // Status matching logic (Completed vs Pending vs Shipped)
       const matchesStatus = filterStatus === '' || 
-        (filterStatus === 'Completed' ? isItemCompleted : (filterStatus === 'Pending' ? !isItemCompleted : true));
+        (filterStatus === 'Completed' ? item.statusText === 'Completed' : 
+         filterStatus === 'Shipped' ? item.statusText === 'Shipped' :
+         filterStatus === 'Pending' ? item.statusText.startsWith('Pending') : true);
         
       const matchesShipmentMode = filterShipmentMode === '' || item.shipmentMode === filterShipmentMode;
       const matchesDestination = filterDestination === '' || item.destination === filterDestination;
@@ -253,7 +263,7 @@ export function Dashboard() {
     
     filteredItems.forEach(item => {
       coQty += item.coQty;
-      if (item.statusText !== 'Completed') {
+      if (item.statusText.startsWith('Pending')) {
         pendingQty += (item.coQty - item.cumSewOutQty);
       } else {
         completedCount += 1;
@@ -357,6 +367,7 @@ export function Dashboard() {
 
               <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="flex-1 sm:w-auto py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
                 <option value="">All Statuses</option>
+                <option value="Shipped">Shipped</option>
                 <option value="Completed">Completed</option>
                 <option value="Pending">Pending</option>
               </select>
@@ -440,7 +451,9 @@ export function Dashboard() {
                       <td className="px-3 py-2.5 border border-slate-200 text-center whitespace-nowrap">
                         <span className={cn(
                           "inline-flex items-center px-2 py-0.5 rounded-full font-medium text-[11px] uppercase tracking-wider",
-                          row.statusText === 'Completed' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"
+                          row.statusText === 'Shipped' ? "bg-blue-100 text-blue-700" :
+                          row.statusText === 'Completed' ? "bg-emerald-100 text-emerald-700" : 
+                          "bg-amber-100 text-amber-800"
                         )}>
                           {row.statusText}
                         </span>
