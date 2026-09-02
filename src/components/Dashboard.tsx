@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2 } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { db } from '../firebase';
@@ -437,6 +437,101 @@ export function Dashboard() {
     return { completedScheduleLines, pendingScheduleLines, completedVPOs, pendingVPOs };
   }, [filteredItems]);
 
+  const handlePrint = () => {
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'absolute';
+    iframe.style.width = '0px';
+    iframe.style.height = '0px';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document;
+    if (!doc) return;
+
+    doc.open();
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Production Data Report</title>
+        <style>
+          @page { size: A4 landscape; margin: 10mm; }
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            font-size: 8pt; 
+            color: #000; 
+            background: #fff;
+          }
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+          th, td { border: 1px solid #ccc; padding: 4px; text-align: left; word-wrap: break-word; }
+          th { background-color: #f1f5f9; font-weight: bold; }
+          h2 { font-size: 14pt; margin: 0 0 10px 0; }
+          .header { margin-bottom: 15px; }
+          .print-time { font-size: 8pt; color: #555; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h2>Production Orders Report</h2>
+          <div class="print-time">Printed on: ${new Date().toLocaleString()} &bull; Total Records: ${filteredItems.length}</div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Plan Del Date</th>
+              <th>WEEK NO</th>
+              <th>Buyer</th>
+              <th>Group Tech Class</th>
+              <th>Buyer Division Name</th>
+              <th>Style No</th>
+              <th>Cust Style No</th>
+              <th>VPO No</th>
+              <th>Shipment Mode</th>
+              <th>Color Code</th>
+              <th>Color Name</th>
+              <th>Destination</th>
+              <th>Pack Method</th>
+              <th>Schedule No</th>
+              <th>CO Qty</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredItems.map(item => `
+              <tr>
+                <td>${item.planDelDate || ''}</td>
+                <td>${item.weekNo || ''}</td>
+                <td>${item.buyer || ''}</td>
+                <td>${item.groupTechClass || ''}</td>
+                <td>${item.buyerDivisionName || ''}</td>
+                <td>${item.styleNo || ''}</td>
+                <td>${item.custStyleNo || ''}</td>
+                <td>${item.vpoNo || ''}</td>
+                <td>${item.shipmentMode || ''}</td>
+                <td>${item.colorCode || ''}</td>
+                <td>${item.colorName || ''}</td>
+                <td>${item.destination || ''}</td>
+                <td>${item.packMethod || ''}</td>
+                <td>${item.scheduleNo || ''}</td>
+                <td>${item.coQty != null ? item.coQty.toLocaleString() : ''}</td>
+                <td>${item.statusText || ''}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </body>
+      </html>
+    `);
+    doc.close();
+
+    setTimeout(() => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      setTimeout(() => {
+        document.body.removeChild(iframe);
+      }, 1000);
+    }, 250);
+  };
 
   if (loadingInitial) {
     return (
@@ -614,6 +709,14 @@ export function Dashboard() {
               className="w-full sm:w-auto px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-medium transition-colors whitespace-nowrap"
             >
               Clear Filters
+            </button>
+            <button
+              onClick={handlePrint}
+              disabled={filteredItems.length === 0}
+              className="w-full sm:w-auto px-5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-sm font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-indigo-100"
+            >
+              <Printer className="w-4 h-4 mr-2" />
+              Print
             </button>
           </div>
         </div>
