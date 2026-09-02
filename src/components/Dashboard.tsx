@@ -801,7 +801,7 @@ export function Dashboard() {
         {/* Filters and Search Bar */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex flex-col lg:flex-row gap-4">
-            <div className="relative flex-1">
+            <div className="relative w-full lg:w-80 shrink-0">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input 
                 type="text" 
@@ -812,7 +812,7 @@ export function Dashboard() {
               />
             </div>
             
-            <div className="flex flex-wrap sm:flex-nowrap gap-3">
+            <div className="flex flex-wrap sm:flex-nowrap gap-3 w-full">
               <MultiSelectDropdown 
                 label="All Buyers"
                 options={uniqueBuyers}
