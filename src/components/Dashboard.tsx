@@ -34,7 +34,7 @@ export interface ProductionOrder {
 export function Dashboard() {
   const [data, setData] = useState<ProductionOrder[] | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
+  const [loadingState, setLoadingState] = useState<'idle' | 'reading' | 'parsing' | 'uploading'>('idle');
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [loadingInitial, setLoadingInitial] = useState(true);
   const [remarks, setRemarks] = useState<Record<string, string>>({});
@@ -104,7 +104,7 @@ export function Dashboard() {
   };
 
   const uploadToFirestore = async (parsedData: ProductionOrder[]) => {
-    setIsUploading(true);
+    setLoadingState('uploading');
     setUploadProgress({ current: 0, total: parsedData.length });
     try {
       const uploadId = Date.now().toString();
@@ -133,9 +133,10 @@ export function Dashboard() {
     } catch (err) {
       console.error(err);
       alert("Failed to upload data to database.");
+      setLoadingState('idle');
     } finally {
       setTimeout(() => {
-        setIsUploading(false);
+        setLoadingState('idle');
         setUploadProgress({ current: 0, total: 0 });
       }, 1000);
     }
@@ -150,15 +151,21 @@ export function Dashboard() {
 
   const processFile = (file: File) => {
     setError(null);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const arrayBuffer = e.target?.result;
-      if (arrayBuffer) {
-        try {
-          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
-          const jsonData = XLSX.utils.sheet_to_json(worksheet);
+    setLoadingState('reading');
+    
+    setTimeout(() => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setLoadingState('parsing');
+        
+        setTimeout(() => {
+          const arrayBuffer = e.target?.result;
+          if (arrayBuffer) {
+            try {
+              const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+              const firstSheetName = workbook.SheetNames[0];
+              const worksheet = workbook.Sheets[firstSheetName];
+              const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
           if (jsonData.length === 0) {
             setError("The uploaded file appears to be empty.");
@@ -301,6 +308,7 @@ export function Dashboard() {
 
         } catch (err: any) {
           console.error("Error parsing Excel file", err);
+          setLoadingState('idle');
           if (err.message && err.message.includes("Encrypted file")) {
             setError("This Excel file is encrypted or password-protected. Please remove the password protection and try again.");
           } else {
@@ -308,8 +316,16 @@ export function Dashboard() {
           }
         }
       }
-    };
-    reader.readAsArrayBuffer(file);
+        }, 50); // Yield before heavy parsing
+      };
+      
+      reader.onerror = () => {
+        setError("Error reading file.");
+        setLoadingState('idle');
+      };
+      
+      reader.readAsArrayBuffer(file);
+    }, 50); // Yield to show "reading" state
   };
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -440,20 +456,45 @@ export function Dashboard() {
           <h2 className="text-2xl font-bold text-slate-900 mb-2">Upload Production Data</h2>
           <p className="text-slate-500 mb-8">Upload your Excel (.xlsx) file to instantly generate the production dashboard.</p>
           
-          {isUploading ? (
-            <div className="py-8 flex flex-col items-center w-full">
-              <Loader2 className="w-10 h-10 text-indigo-500 animate-spin mb-4" />
-              <p className="text-sm font-medium text-slate-700">Uploading data to cloud...</p>
-              
-              <div className="w-full bg-slate-100 rounded-full h-2.5 mt-4 mb-2 overflow-hidden">
-                <div 
-                  className="bg-indigo-500 h-2.5 rounded-full transition-all duration-300 ease-out" 
-                  style={{ width: `${uploadProgress.total > 0 ? Math.round((uploadProgress.current / uploadProgress.total) * 100) : 0}%` }}
-                ></div>
+          {loadingState !== 'idle' ? (
+            <div className="py-10 flex flex-col items-center w-full relative">
+              <div className="absolute inset-0 bg-indigo-50/50 rounded-2xl -z-10 blur-xl animate-pulse"></div>
+              <div className="relative bg-white shadow-xl rounded-2xl p-6 border border-slate-100 w-full mb-4 flex flex-col items-center">
+                <div className="relative mb-6">
+                  <div className="absolute inset-0 bg-indigo-200 rounded-full animate-ping opacity-20"></div>
+                  <Loader2 className="w-12 h-12 text-indigo-600 animate-spin relative z-10" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-800 mb-1">
+                  {loadingState === 'reading' && "Reading File..."}
+                  {loadingState === 'parsing' && "Analyzing Excel Data..."}
+                  {loadingState === 'uploading' && "Syncing to Cloud..."}
+                </h3>
+                <p className="text-xs font-medium text-slate-500 max-w-[200px] text-center">
+                  {loadingState === 'reading' && "Loading your document into memory. Please hold on."}
+                  {loadingState === 'parsing' && "Processing rows, applying filters, and mapping data..."}
+                  {loadingState === 'uploading' && "Securely saving records to the database."}
+                </p>
+                
+                {loadingState === 'uploading' && (
+                  <div className="w-full mt-6">
+                    <div className="flex justify-between items-end mb-2">
+                      <span className="text-xs font-semibold text-slate-600 uppercase tracking-wider">Progress</span>
+                      <span className="text-sm font-bold text-indigo-600">
+                        {uploadProgress.total > 0 ? Math.round((uploadProgress.current / uploadProgress.total) * 100) : 0}%
+                      </span>
+                    </div>
+                    <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden shadow-inner">
+                      <div 
+                        className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300 ease-out shadow-sm" 
+                        style={{ width: `${uploadProgress.total > 0 ? Math.round((uploadProgress.current / uploadProgress.total) * 100) : 0}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-[10px] font-medium text-slate-400 mt-2 text-center">
+                      {uploadProgress.total > 0 ? `${uploadProgress.current.toLocaleString()} / ${uploadProgress.total.toLocaleString()} rows synced` : "Preparing sync..."}
+                    </p>
+                  </div>
+                )}
               </div>
-              <p className="text-xs font-semibold text-slate-500">
-                {uploadProgress.total > 0 ? `${uploadProgress.current} / ${uploadProgress.total} rows` : "Processing..."}
-              </p>
             </div>
           ) : (
             <>
@@ -500,11 +541,11 @@ export function Dashboard() {
           </div>
           <button 
             onClick={() => setData(null)}
-            disabled={isUploading}
+            disabled={loadingState !== 'idle'}
             className="inline-flex items-center px-4 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-medium hover:bg-slate-800 shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2" />}
-            {isUploading ? "Uploading..." : "Upload New File"}
+            {loadingState !== 'idle' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2" />}
+            {loadingState !== 'idle' ? "Processing..." : "Upload New File"}
           </button>
         </header>
 
