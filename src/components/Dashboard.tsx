@@ -145,6 +145,12 @@ export function Dashboard() {
           const endOf6Weeks = new Date(startOfCurrentWeek);
           endOf6Weeks.setDate(startOfCurrentWeek.getDate() + 42);
           
+          const excludedTerms = [
+            'SIZE SET', 'BLACK SEAL', 'SAMPLES_PRESETTING', 'SAMPLES_PP', 'PP_SAMPLE',
+            'MTL SAMPLE', 'PP SAMPLE', 'PP SAMPLE PRNT', 'PRE SETTING', 'SAMPLE PP',
+            'WASH & TOP', 'PPZ', 'TC-PP', 'TC-PPZ'
+          ];
+
           const filteredData = jsonData.filter((row: any) => {
             const warehouse = String(row['Prod Warehouse'] || '').trim().toUpperCase();
             const isERK = warehouse === 'ERK';
@@ -161,7 +167,11 @@ export function Dashboard() {
               isWithin6Weeks = rowDate >= startOfCurrentWeek && rowDate < endOf6Weeks;
             }
             
-            return isERK && isWithin6Weeks;
+            const hasExcludedTerm = Object.values(row).some(val => 
+              excludedTerms.includes(String(val).trim().toUpperCase())
+            );
+            
+            return isERK && isWithin6Weeks && !hasExcludedTerm;
           });
 
           if (filteredData.length === 0) {
