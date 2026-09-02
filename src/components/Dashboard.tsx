@@ -255,20 +255,44 @@ export function Dashboard() {
 
   // Summary Metrics
   const summary = useMemo(() => {
-    let coQty = 0;
-    let pendingQty = 0;
-    let completedCount = 0;
+    let completedScheduleLines = 0;
+    let pendingScheduleLines = 0;
+    
+    const vpoMap = new Map<string, { total: number, completed: number }>();
     
     filteredItems.forEach(item => {
-      coQty += item.coQty;
-      if (item.statusText.startsWith('Pending')) {
-        pendingQty += (item.coQty - item.cumSewOutQty);
+      const isCompleted = item.statusText === 'Completed' || item.statusText === 'Shipped';
+      
+      if (isCompleted) {
+        completedScheduleLines++;
       } else {
-        completedCount += 1;
+        pendingScheduleLines++;
+      }
+      
+      if (item.vpoNo) {
+        if (!vpoMap.has(item.vpoNo)) {
+          vpoMap.set(item.vpoNo, { total: 0, completed: 0 });
+        }
+        const vpoData = vpoMap.get(item.vpoNo)!;
+        vpoData.total++;
+        if (isCompleted) {
+          vpoData.completed++;
+        }
+      }
+    });
+    
+    let completedVPOs = 0;
+    let pendingVPOs = 0;
+    
+    vpoMap.forEach((data) => {
+      if (data.total === data.completed) {
+        completedVPOs++;
+      } else {
+        pendingVPOs++;
       }
     });
 
-    return { totalOrders: filteredItems.length, coQty, pendingQty, completedCount };
+    return { completedScheduleLines, pendingScheduleLines, completedVPOs, pendingVPOs };
   }, [filteredItems]);
 
 
@@ -332,10 +356,10 @@ export function Dashboard() {
 
         {/* Summary Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <MetricCard title="Total Filtered Orders" value={summary.totalOrders.toString()} icon={<Package className="w-5 h-5 text-blue-500" />} />
-          <MetricCard title="Total CO Qty" value={summary.coQty.toLocaleString()} icon={<TrendingUp className="w-5 h-5 text-indigo-500" />} />
-          <MetricCard title="Total Pending Qty" value={summary.pendingQty.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} />
-          <MetricCard title="Completed Orders" value={summary.completedCount.toString()} icon={<CheckCircle className="w-5 h-5 text-emerald-500" />} />
+          <MetricCard title="Completed Schedule Line" value={summary.completedScheduleLines.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-emerald-500" />} />
+          <MetricCard title="Pending Schedule Line" value={summary.pendingScheduleLines.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} />
+          <MetricCard title="Completed VPO" value={summary.completedVPOs.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-blue-500" />} />
+          <MetricCard title="Pending VPO" value={summary.pendingVPOs.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-orange-500" />} />
         </div>
 
         {/* Filters and Search Bar */}
