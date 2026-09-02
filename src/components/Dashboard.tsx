@@ -459,12 +459,45 @@ export function Dashboard() {
   const paddingTop = virtualRows.length > 0 ? virtualRows[0]?.start || 0 : 0;
   const paddingBottom = virtualRows.length > 0 ? totalSize - (virtualRows[virtualRows.length - 1]?.end || 0) : 0;
 
+  // Helper to get unique options based on current filters (excluding the filter itself)
+  const getUniqueOptions = useCallback((field: keyof ProductionOrder) => {
+    if (!data) return [];
+    const options = new Set<string>();
+    
+    data.forEach(item => {
+      const matchesSearch = searchTerm === '' || 
+        Object.values(item).some(val => 
+          String(val).toLowerCase().includes(searchTerm.toLowerCase())
+        );
+      
+      const matchesBuyer = field === 'buyer' || filterBuyer.length === 0 || filterBuyer.includes(String(item.buyer));
+      const matchesWeek = field === 'weekNo' || filterWeekNo.length === 0 || filterWeekNo.includes(String(item.weekNo));
+      
+      const matchesStatus = filterStatus.length === 0 || filterStatus.some(status => {
+         if (status === 'Completed') return item.statusText === 'Completed';
+         if (status === 'Shipped') return item.statusText === 'Shipped';
+         if (status === 'Pending') return item.statusText.startsWith('Pending');
+         return true;
+      });
+        
+      const matchesShipmentMode = field === 'shipmentMode' || filterShipmentMode.length === 0 || filterShipmentMode.includes(String(item.shipmentMode));
+      const matchesDestination = field === 'destination' || filterDestination.length === 0 || filterDestination.includes(String(item.destination));
+      const matchesPackMethod = field === 'packMethod' || filterPackMethod.length === 0 || filterPackMethod.includes(String(item.packMethod));
+
+      if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod) {
+        options.add(String(item[field]));
+      }
+    });
+    
+    return Array.from(options).filter(Boolean);
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod]);
+
   // Unique values for dropdowns
-  const uniqueBuyers = useMemo(() => Array.from(new Set(data?.map(d => d.buyer))).filter(Boolean).sort(), [data]);
-  const uniqueWeeks = useMemo(() => Array.from(new Set(data?.map(d => d.weekNo))).filter(Boolean).sort((a,b) => Number(a) - Number(b)), [data]);
-  const uniqueShipmentModes = useMemo(() => Array.from(new Set(data?.map(d => d.shipmentMode))).filter(Boolean).sort(), [data]);
-  const uniqueDestinations = useMemo(() => Array.from(new Set(data?.map(d => d.destination))).filter(Boolean).sort(), [data]);
-  const uniquePackMethods = useMemo(() => Array.from(new Set(data?.map(d => d.packMethod))).filter(Boolean).sort(), [data]);
+  const uniqueBuyers = useMemo(() => Array.from(new Set([...getUniqueOptions('buyer'), ...filterBuyer])).sort(), [getUniqueOptions, filterBuyer]);
+  const uniqueWeeks = useMemo(() => Array.from(new Set([...getUniqueOptions('weekNo'), ...filterWeekNo])).sort((a,b) => Number(a) - Number(b)), [getUniqueOptions, filterWeekNo]);
+  const uniqueShipmentModes = useMemo(() => Array.from(new Set([...getUniqueOptions('shipmentMode'), ...filterShipmentMode])).sort(), [getUniqueOptions, filterShipmentMode]);
+  const uniqueDestinations = useMemo(() => Array.from(new Set([...getUniqueOptions('destination'), ...filterDestination])).sort(), [getUniqueOptions, filterDestination]);
+  const uniquePackMethods = useMemo(() => Array.from(new Set([...getUniqueOptions('packMethod'), ...filterPackMethod])).sort(), [getUniqueOptions, filterPackMethod]);
 
   // Summary Metrics
   const summary = useMemo(() => {
