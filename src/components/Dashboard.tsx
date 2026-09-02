@@ -119,6 +119,7 @@ export function Dashboard() {
   const [filterShipmentMode, setFilterShipmentMode] = useState<string[]>([]);
   const [filterDestination, setFilterDestination] = useState<string[]>([]);
   const [filterPackMethod, setFilterPackMethod] = useState<string[]>([]);
+  const [filterRemark, setFilterRemark] = useState<string[]>([]);
   
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -380,6 +381,7 @@ export function Dashboard() {
           setFilterShipmentMode([]);
           setFilterDestination([]);
           setFilterPackMethod([]);
+          setFilterRemark([]);
 
         } catch (err: any) {
           console.error("Error parsing Excel file", err);
@@ -429,10 +431,11 @@ export function Dashboard() {
     if (!data) return [];
     
     return data.filter(item => {
+      const itemRemarkText = (remarks[item.id] || '').trim();
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
-        );
+        ) || itemRemarkText.toLowerCase().includes(searchTerm.toLowerCase());
       
       const matchesBuyer = filterBuyer.length === 0 || filterBuyer.includes(String(item.buyer));
       const matchesWeek = filterWeekNo.length === 0 || filterWeekNo.includes(String(item.weekNo));
@@ -449,9 +452,12 @@ export function Dashboard() {
       const matchesDestination = filterDestination.length === 0 || filterDestination.includes(String(item.destination));
       const matchesPackMethod = filterPackMethod.length === 0 || filterPackMethod.includes(String(item.packMethod));
 
-      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod;
+      const normalizedItemRemark = itemRemarkText.toUpperCase();
+      const matchesRemark = filterRemark.length === 0 || filterRemark.some(r => r === normalizedItemRemark || (r === '(Empty)' && normalizedItemRemark === ''));
+
+      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark;
     });
-  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod]);
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, remarks]);
 
   const rowVirtualizer = useVirtualizer({
     count: filteredItems.length,
@@ -466,15 +472,16 @@ export function Dashboard() {
   const paddingBottom = virtualRows.length > 0 ? totalSize - (virtualRows[virtualRows.length - 1]?.end || 0) : 0;
 
   // Helper to get unique options based on current filters (excluding the filter itself)
-  const getUniqueOptions = useCallback((field: keyof ProductionOrder) => {
+  const getUniqueOptions = useCallback((field: keyof ProductionOrder | 'remark') => {
     if (!data) return [];
     const options = new Set<string>();
     
     data.forEach(item => {
+      const itemRemarkText = (remarks[item.id] || '').trim();
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
-        );
+        ) || itemRemarkText.toLowerCase().includes(searchTerm.toLowerCase());
       
       const matchesBuyer = field === 'buyer' || filterBuyer.length === 0 || filterBuyer.includes(String(item.buyer));
       const matchesWeek = field === 'weekNo' || filterWeekNo.length === 0 || filterWeekNo.includes(String(item.weekNo));
@@ -490,13 +497,20 @@ export function Dashboard() {
       const matchesDestination = field === 'destination' || filterDestination.length === 0 || filterDestination.includes(String(item.destination));
       const matchesPackMethod = field === 'packMethod' || filterPackMethod.length === 0 || filterPackMethod.includes(String(item.packMethod));
 
-      if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod) {
-        options.add(String(item[field]));
+      const normalizedItemRemark = itemRemarkText.toUpperCase();
+      const matchesRemark = field === 'remark' || filterRemark.length === 0 || filterRemark.some(r => r === normalizedItemRemark || (r === '(Empty)' && normalizedItemRemark === ''));
+
+      if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark) {
+        if (field === 'remark') {
+          options.add(normalizedItemRemark === '' ? '(Empty)' : normalizedItemRemark);
+        } else {
+          options.add(String(item[field as keyof ProductionOrder]));
+        }
       }
     });
     
     return Array.from(options).filter(Boolean);
-  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod]);
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, remarks]);
 
   // Unique values for dropdowns
   const uniqueBuyers = useMemo(() => Array.from(new Set([...getUniqueOptions('buyer'), ...filterBuyer])).sort(), [getUniqueOptions, filterBuyer]);
@@ -504,6 +518,7 @@ export function Dashboard() {
   const uniqueShipmentModes = useMemo(() => Array.from(new Set([...getUniqueOptions('shipmentMode'), ...filterShipmentMode])).sort(), [getUniqueOptions, filterShipmentMode]);
   const uniqueDestinations = useMemo(() => Array.from(new Set([...getUniqueOptions('destination'), ...filterDestination])).sort(), [getUniqueOptions, filterDestination]);
   const uniquePackMethods = useMemo(() => Array.from(new Set([...getUniqueOptions('packMethod'), ...filterPackMethod])).sort(), [getUniqueOptions, filterPackMethod]);
+  const uniqueRemarks = useMemo(() => Array.from(new Set([...getUniqueOptions('remark'), ...filterRemark])).sort(), [getUniqueOptions, filterRemark]);
 
   // Summary Metrics
   const summary = useMemo(() => {
@@ -843,9 +858,16 @@ export function Dashboard() {
               onChange={setFilterPackMethod}
             />
             
+            <MultiSelectDropdown 
+              label="All Remarks"
+              options={uniqueRemarks}
+              selectedValues={filterRemark}
+              onChange={setFilterRemark}
+            />
+            
             <button 
               onClick={() => {
-                setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]);
+                setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]); setFilterRemark([]);
               }}
               className="w-full sm:w-auto px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-medium transition-colors whitespace-nowrap"
             >
