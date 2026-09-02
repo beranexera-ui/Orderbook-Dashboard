@@ -1,0 +1,6 @@
+{
+  "name": "Production Dashboard",
+  "description": "Dashboard visualizing garment production orders, deliveries, and fulfillment percentages.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
