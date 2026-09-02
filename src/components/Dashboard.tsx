@@ -853,13 +853,13 @@ export function Dashboard() {
                 onClick={() => executePrint('portrait')} 
                 className="w-full px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-medium transition-colors text-sm flex items-center justify-center"
               >
-                Portrait (Kelin Athata)
+                Portrait
               </button>
               <button 
                 onClick={() => executePrint('landscape')} 
                 className="w-full px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-medium transition-colors text-sm flex items-center justify-center"
               >
-                Landscape (Harahata)
+                Landscape
               </button>
               <button 
                 onClick={() => setShowPrintModal(false)} 
