@@ -22,6 +22,7 @@ export interface ProductionOrder {
   cumSewInQty: number;
   cumSewOutQty: number;
   cumSewOutRejQty: number;
+  statusText: string;
   deliveredQty: number;
   orderToShippedPct: number;
 }
@@ -57,44 +58,66 @@ export function Dashboard() {
             return;
           }
 
-          const currentYear = new Date().getFullYear().toString();
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          
+          // Get start of current week (assuming Monday)
+          const dayOfWeek = today.getDay();
+          const diffToMonday = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+          const startOfCurrentWeek = new Date(today);
+          startOfCurrentWeek.setDate(diffToMonday);
+
+          const endOf6Weeks = new Date(startOfCurrentWeek);
+          endOf6Weeks.setDate(startOfCurrentWeek.getDate() + 42); // 6 weeks from start of this week
           
           const filteredData = jsonData.filter((row: any) => {
             const warehouse = String(row['Prod Warehouse'] || '').trim().toUpperCase();
             const isERK = warehouse === 'ERK';
             
-            // Checking common date fields in the dataset to match current year (e.g., "2026")
-            const placementDate = String(row['Order placement date'] || '').trim();
-            const fobDate = String(row['FOB Date'] || '').trim();
-            const reqDelDate = String(row['Req Del date'] || '').trim();
+            const rawPlanDelDate = String(row['Plan Del Date'] || row['Plan Del Date '] || '').trim();
+            let isWithin6Weeks = false;
             
-            const isCurrentYear = placementDate.startsWith(currentYear) || 
-                                  fobDate.startsWith(currentYear) || 
-                                  reqDelDate.startsWith(currentYear);
+            if (rawPlanDelDate.length === 8) {
+              const year = parseInt(rawPlanDelDate.substring(0, 4));
+              const month = parseInt(rawPlanDelDate.substring(4, 6)) - 1;
+              const dayNum = parseInt(rawPlanDelDate.substring(6, 8));
+              const rowDate = new Date(year, month, dayNum);
+              
+              isWithin6Weeks = rowDate >= startOfCurrentWeek && rowDate < endOf6Weeks;
+            }
             
-            return isERK && isCurrentYear;
+            return isERK && isWithin6Weeks;
           });
 
           if (filteredData.length === 0) {
-            setError(`No data found for Prod Warehouse "ERK" in the current year (${currentYear}).`);
+            setError(`No data found for Prod Warehouse "ERK" within the 6-week window starting this week.`);
             return;
           }
 
           const parsedData: ProductionOrder[] = filteredData.map((row: any, index: number) => {
-            const planDelDate = String(row['Plan Del Date'] || row['Plan Del Date '] || '');
+            const rawPlanDelDate = String(row['Plan Del Date'] || row['Plan Del Date '] || '').trim();
+            const planDelDate = rawPlanDelDate.length === 8 
+              ? `${rawPlanDelDate.substring(0, 4)}/${rawPlanDelDate.substring(4, 6)}/${rawPlanDelDate.substring(6, 8)}`
+              : rawPlanDelDate;
+              
             let weekNo = String(row['WEEK NO'] || '');
             
             // Auto-generate WEEK NO from YYYYMMDD if missing
-            if (!weekNo && planDelDate.length === 8) {
-              const year = parseInt(planDelDate.substring(0, 4));
-              const month = parseInt(planDelDate.substring(4, 6)) - 1;
-              const day = parseInt(planDelDate.substring(6, 8));
+            if (!weekNo && rawPlanDelDate.length === 8) {
+              const year = parseInt(rawPlanDelDate.substring(0, 4));
+              const month = parseInt(rawPlanDelDate.substring(4, 6)) - 1;
+              const day = parseInt(rawPlanDelDate.substring(6, 8));
               const d = new Date(Date.UTC(year, month, day));
               const dayNum = d.getUTCDay() || 7;
               d.setUTCDate(d.getUTCDate() + 4 - dayNum);
               const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
               weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7).toString();
             }
+
+            const coQty = Number(row['CO Qty']) || 0;
+            const cumSewOutQty = Number(row['Cum SewOut Qty']) || 0;
+            const pendingQty = coQty - cumSewOutQty;
+            const statusText = cumSewOutQty >= coQty ? 'Completed' : `Pending - ${pendingQty}`;
 
             return {
               id: index.toString(),
@@ -112,10 +135,11 @@ export function Dashboard() {
               scheduleNo: row['Schedule No'] || '',
               planDelDate: planDelDate,
               weekNo: weekNo,
-              coQty: Number(row['CO Qty']) || 0,
+              coQty: coQty,
               cumSewInQty: Number(row['Cum Sew In Qty']) || 0,
-              cumSewOutQty: Number(row['Cum SewOut Qty']) || 0,
+              cumSewOutQty: cumSewOutQty,
               cumSewOutRejQty: Number(row['Cum Sew Out Rej Qty']) || 0,
+              statusText: statusText,
               deliveredQty: Number(row['Delivered Qty']) || 0,
               orderToShippedPct: Number(row['Order to shipped %']) || 0,
             };
@@ -241,6 +265,7 @@ export function Dashboard() {
                   <th className="px-4 py-4 font-medium whitespace-nowrap text-right">CO Qty</th>
                   <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Cum Sew In Qty</th>
                   <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Cum SewOut Qty</th>
+                  <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Status</th>
                   <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Cum Sew Out Rej Qty</th>
                   <th className="px-4 py-4 font-medium whitespace-nowrap text-right">Delivered Qty</th>
                 </tr>
@@ -265,6 +290,14 @@ export function Dashboard() {
                     <td className="px-4 py-4 text-right font-medium text-slate-900 whitespace-nowrap">{row.coQty.toLocaleString()}</td>
                     <td className="px-4 py-4 text-right text-slate-700 whitespace-nowrap">{row.cumSewInQty.toLocaleString()}</td>
                     <td className="px-4 py-4 text-right text-slate-700 whitespace-nowrap">{row.cumSewOutQty.toLocaleString()}</td>
+                    <td className="px-4 py-4 text-right whitespace-nowrap">
+                      <span className={cn(
+                        "inline-flex items-center px-2.5 py-0.5 rounded-full font-medium text-xs",
+                        row.statusText === 'Completed' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                      )}>
+                        {row.statusText}
+                      </span>
+                    </td>
                     <td className="px-4 py-4 text-right text-slate-700 whitespace-nowrap">{row.cumSewOutRejQty.toLocaleString()}</td>
                     <td className="px-4 py-4 text-right font-medium text-slate-900 whitespace-nowrap">{row.deliveredQty.toLocaleString()}</td>
                   </tr>
