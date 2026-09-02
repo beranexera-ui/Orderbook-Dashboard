@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
-import { UploadCloud, FileSpreadsheet, AlertCircle, Search, ChevronLeft, ChevronRight, Package, CheckCircle, TrendingUp, AlertTriangle } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 export interface ProductionOrder {
   id: string;
@@ -41,9 +42,7 @@ export function Dashboard() {
   const [filterShipmentMode, setFilterShipmentMode] = useState('');
   const [filterDestination, setFilterDestination] = useState('');
   
-  // Pagination State
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 50;
+  const tableContainerRef = useRef<HTMLDivElement>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -175,7 +174,6 @@ export function Dashboard() {
           setFilterStatus('');
           setFilterShipmentMode('');
           setFilterDestination('');
-          setCurrentPage(1);
 
         } catch (err: any) {
           console.error("Error parsing Excel file", err);
@@ -237,17 +235,17 @@ export function Dashboard() {
     });
   }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination]);
 
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / itemsPerPage));
-  const paginatedData = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage;
-    return filteredItems.slice(start, start + itemsPerPage);
-  }, [filteredItems, currentPage]);
+  const rowVirtualizer = useVirtualizer({
+    count: filteredItems.length,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => 45,
+    overscan: 10,
+  });
 
-  // Effect to reset page when filters change
-  React.useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination]);
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const totalSize = rowVirtualizer.getTotalSize();
+  const paddingTop = virtualRows.length > 0 ? virtualRows[0]?.start || 0 : 0;
+  const paddingBottom = virtualRows.length > 0 ? totalSize - (virtualRows[virtualRows.length - 1]?.end || 0) : 0;
 
   // Unique values for dropdowns
   const uniqueBuyers = useMemo(() => Array.from(new Set(data?.map(d => d.buyer))).filter(Boolean).sort(), [data]);
@@ -398,9 +396,9 @@ export function Dashboard() {
 
         {/* Detailed Data Table */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left border-collapse">
-              <thead className="text-xs text-slate-600 font-semibold bg-slate-100 border-b border-slate-200">
+          <div ref={tableContainerRef} className="overflow-auto max-h-[70vh]">
+            <table className="w-full text-sm text-left border-collapse relative">
+              <thead className="text-xs text-slate-600 font-semibold bg-slate-100 border-b border-slate-200 sticky top-0 z-20 shadow-sm">
                 <tr>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Plan Del Date</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center">WEEK NO</th>
@@ -425,10 +423,17 @@ export function Dashboard() {
                 </tr>
               </thead>
               <tbody>
-                {paginatedData.length > 0 ? (
-                  paginatedData.map((row) => (
-                    <tr key={row.id} className="hover:bg-indigo-50/50 transition-colors bg-white">
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.planDelDate}</td>
+                {paddingTop > 0 && (
+                  <tr>
+                    <td colSpan={20} style={{ height: `${paddingTop}px` }}></td>
+                  </tr>
+                )}
+                {virtualRows.length > 0 ? (
+                  virtualRows.map((virtualRow) => {
+                    const row = filteredItems[virtualRow.index];
+                    return (
+                      <tr key={row.id} className="hover:bg-indigo-50/50 transition-colors bg-white">
+                        <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.planDelDate}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap text-center font-medium bg-slate-50/50">{row.weekNo}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.buyer}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.groupTechClass}</td>
@@ -459,8 +464,9 @@ export function Dashboard() {
                         </span>
                       </td>
                       <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.deliveredQty.toLocaleString()}</td>
-                    </tr>
-                  ))
+                      </tr>
+                    );
+                  })
                 ) : (
                   <tr>
                     <td colSpan={20} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
@@ -468,37 +474,14 @@ export function Dashboard() {
                     </td>
                   </tr>
                 )}
+                {paddingBottom > 0 && (
+                  <tr>
+                    <td colSpan={20} style={{ height: `${paddingBottom}px` }}></td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
-          
-          {/* Pagination Controls */}
-          {totalPages > 1 && (
-            <div className="bg-white border-t border-slate-200 p-4 flex items-center justify-between">
-              <p className="text-sm text-slate-500">
-                Showing <span className="font-medium text-slate-900">{filteredItems.length === 0 ? 0 : ((currentPage - 1) * itemsPerPage) + 1}</span> to <span className="font-medium text-slate-900">{Math.min(currentPage * itemsPerPage, filteredItems.length)}</span> of <span className="font-medium text-slate-900">{filteredItems.length}</span> results
-              </p>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-                <span className="text-sm font-medium text-slate-700 px-3">
-                  Page {currentPage} of {totalPages}
-                </span>
-                <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
-                  className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronRight className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
       </div>
