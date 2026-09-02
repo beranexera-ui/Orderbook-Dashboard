@@ -109,6 +109,7 @@ export function Dashboard() {
   const [remarks, setRemarks] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 
   // Filters State
   const [searchTerm, setSearchTerm] = useState('');
@@ -134,7 +135,12 @@ export function Dashboard() {
 
     const unsub = onSnapshot(doc(db, "dashboardData", "latest"), async (docSnap) => {
       if (docSnap.exists()) {
-        const { currentUploadId } = docSnap.data();
+        const { currentUploadId, timestamp } = docSnap.data();
+        if (timestamp) {
+          setLastUpdated(timestamp);
+        } else {
+          setLastUpdated(null);
+        }
         if (currentUploadId) {
           try {
             const snapshot = await getDocs(collection(db, `uploads/${currentUploadId}/orders`));
@@ -743,8 +749,21 @@ export function Dashboard() {
         
         <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Production Overview</h1>
-            <p className="text-slate-500 mt-1">Item-level fulfillment details for the next 6 weeks.</p>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Production Overview</h1>
+              <span className="bg-indigo-50 text-indigo-700 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-indigo-100 uppercase tracking-wide">
+                Powered by DILEEPA WICKRAMASINGHE
+              </span>
+            </div>
+            <p className="text-slate-500 mt-1 text-sm flex items-center gap-2">
+              <span>Item-level fulfillment details for the next 6 weeks.</span>
+              {lastUpdated && (
+                <>
+                  <span className="text-slate-300">•</span>
+                  <span className="text-slate-600 font-medium">OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                </>
+              )}
+            </p>
           </div>
           <button 
             onClick={() => setData(null)}
