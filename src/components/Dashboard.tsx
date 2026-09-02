@@ -1,7 +1,9 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react';
-import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle } from 'lucide-react';
+import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { db } from '../firebase';
+import { doc, setDoc, onSnapshot, writeBatch, collection, getDocs } from 'firebase/firestore';
 
 export interface ProductionOrder {
   id: string;
@@ -31,6 +33,8 @@ export interface ProductionOrder {
 export function Dashboard() {
   const [data, setData] = useState<ProductionOrder[] | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [loadingInitial, setLoadingInitial] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,8 +45,70 @@ export function Dashboard() {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterShipmentMode, setFilterShipmentMode] = useState('');
   const [filterDestination, setFilterDestination] = useState('');
+  const [filterPackMethod, setFilterPackMethod] = useState('');
   
   const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, "dashboardData", "latest"), async (docSnap) => {
+      if (docSnap.exists()) {
+        const { currentUploadId } = docSnap.data();
+        if (currentUploadId) {
+          try {
+            const snapshot = await getDocs(collection(db, `uploads/${currentUploadId}/orders`));
+            const loadedData: ProductionOrder[] = [];
+            snapshot.forEach(d => {
+               loadedData.push(d.data() as ProductionOrder);
+            });
+            loadedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
+            setData(loadedData);
+          } catch(e) {
+            console.error("Error fetching data", e);
+          }
+        } else {
+           setData(null);
+        }
+      } else {
+        setData(null);
+      }
+      setLoadingInitial(false);
+    }, (error) => {
+      console.error("Snapshot error:", error);
+      setLoadingInitial(false);
+    });
+    return () => unsub();
+  }, []);
+
+  const uploadToFirestore = async (parsedData: ProductionOrder[]) => {
+    setIsUploading(true);
+    try {
+      const uploadId = Date.now().toString();
+      const batchSize = 400; // max 500 operations per batch
+      
+      for (let i = 0; i < parsedData.length; i += batchSize) {
+        const chunk = parsedData.slice(i, i + batchSize);
+        const batch = writeBatch(db);
+        
+        chunk.forEach(order => {
+          const orderRef = doc(db, `uploads/${uploadId}/orders`, order.id);
+          batch.set(orderRef, order);
+        });
+        
+        await batch.commit();
+      }
+
+      await setDoc(doc(db, "dashboardData", "latest"), {
+        currentUploadId: uploadId,
+        timestamp: Date.now()
+      });
+      
+    } catch (err) {
+      console.error(err);
+      alert("Failed to upload data to database.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -166,6 +232,7 @@ export function Dashboard() {
           parsedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
 
           setData(parsedData);
+          uploadToFirestore(parsedData);
           
           // Reset states on new upload
           setSearchTerm('');
@@ -174,6 +241,7 @@ export function Dashboard() {
           setFilterStatus('');
           setFilterShipmentMode('');
           setFilterDestination('');
+          setFilterPackMethod('');
 
         } catch (err: any) {
           console.error("Error parsing Excel file", err);
@@ -230,10 +298,11 @@ export function Dashboard() {
         
       const matchesShipmentMode = filterShipmentMode === '' || item.shipmentMode === filterShipmentMode;
       const matchesDestination = filterDestination === '' || item.destination === filterDestination;
+      const matchesPackMethod = filterPackMethod === '' || item.packMethod === filterPackMethod;
 
-      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination;
+      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod;
     });
-  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination]);
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod]);
 
   const rowVirtualizer = useVirtualizer({
     count: filteredItems.length,
@@ -252,6 +321,7 @@ export function Dashboard() {
   const uniqueWeeks = useMemo(() => Array.from(new Set(data?.map(d => d.weekNo))).filter(Boolean).sort((a,b) => Number(a) - Number(b)), [data]);
   const uniqueShipmentModes = useMemo(() => Array.from(new Set(data?.map(d => d.shipmentMode))).filter(Boolean).sort(), [data]);
   const uniqueDestinations = useMemo(() => Array.from(new Set(data?.map(d => d.destination))).filter(Boolean).sort(), [data]);
+  const uniquePackMethods = useMemo(() => Array.from(new Set(data?.map(d => d.packMethod))).filter(Boolean).sort(), [data]);
 
   // Summary Metrics
   const summary = useMemo(() => {
@@ -296,6 +366,14 @@ export function Dashboard() {
   }, [filteredItems]);
 
 
+  if (loadingInitial) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+      </div>
+    );
+  }
+
   if (!data) {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-6 md:p-10 flex flex-col items-center justify-center">
@@ -306,31 +384,41 @@ export function Dashboard() {
           <h2 className="text-2xl font-bold text-slate-900 mb-2">Upload Production Data</h2>
           <p className="text-slate-500 mb-8">Upload your Excel (.xlsx) file to instantly generate the production dashboard.</p>
           
-          {error && (
-            <div className="mb-6 p-4 bg-rose-50 border border-rose-200 rounded-xl flex items-start text-left">
-              <AlertCircle className="w-5 h-5 text-rose-500 mr-3 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-rose-700">{error}</p>
+          {isUploading ? (
+            <div className="py-8 flex flex-col items-center">
+              <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mb-4" />
+              <p className="text-sm font-medium text-slate-700">Uploading data to cloud...</p>
+              <p className="text-xs text-slate-500 mt-1">This may take a moment for large files.</p>
             </div>
-          )}
+          ) : (
+            <>
+              {error && (
+                <div className="mb-6 p-4 bg-rose-50 border border-rose-200 rounded-xl flex items-start text-left">
+                  <AlertCircle className="w-5 h-5 text-rose-500 mr-3 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-rose-700">{error}</p>
+                </div>
+              )}
 
-          <div 
-            className={`border-2 border-dashed rounded-2xl p-8 transition-colors cursor-pointer ${isDragging ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'}`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <UploadCloud className={`w-8 h-8 mx-auto mb-3 ${isDragging ? 'text-indigo-500' : 'text-slate-400'}`} />
-            <p className="text-sm font-medium text-slate-700 mb-1">Click to upload or drag and drop</p>
-            <p className="text-xs text-slate-500">XLSX, XLS, or CSV files</p>
-            <input 
-              type="file" 
-              className="hidden" 
-              ref={fileInputRef} 
-              accept=".xlsx, .xls, .csv" 
-              onChange={handleFileUpload} 
-            />
-          </div>
+              <div 
+                className={`border-2 border-dashed rounded-2xl p-8 transition-colors cursor-pointer ${isDragging ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <UploadCloud className={`w-8 h-8 mx-auto mb-3 ${isDragging ? 'text-indigo-500' : 'text-slate-400'}`} />
+                <p className="text-sm font-medium text-slate-700 mb-1">Click to upload or drag and drop</p>
+                <p className="text-xs text-slate-500">XLSX, XLS, or CSV files</p>
+                <input 
+                  type="file" 
+                  className="hidden" 
+                  ref={fileInputRef} 
+                  accept=".xlsx, .xls, .csv" 
+                  onChange={handleFileUpload} 
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
     );
@@ -347,10 +435,11 @@ export function Dashboard() {
           </div>
           <button 
             onClick={() => setData(null)}
-            className="inline-flex items-center px-4 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-medium hover:bg-slate-800 shadow-sm transition-colors cursor-pointer"
+            disabled={isUploading}
+            className="inline-flex items-center px-4 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-medium hover:bg-slate-800 shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <UploadCloud className="w-4 h-4 mr-2" />
-            Upload New File
+            {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2" />}
+            {isUploading ? "Uploading..." : "Upload New File"}
           </button>
         </header>
 
@@ -406,10 +495,15 @@ export function Dashboard() {
               <option value="">All Destinations</option>
               {uniqueDestinations.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
+
+            <select value={filterPackMethod} onChange={(e) => setFilterPackMethod(e.target.value)} className="w-full sm:flex-1 py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
+              <option value="">All Pack Methods</option>
+              {uniquePackMethods.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
             
             <button 
               onClick={() => {
-                setSearchTerm(''); setFilterBuyer(''); setFilterWeekNo(''); setFilterStatus(''); setFilterShipmentMode(''); setFilterDestination('');
+                setSearchTerm(''); setFilterBuyer(''); setFilterWeekNo(''); setFilterStatus(''); setFilterShipmentMode(''); setFilterDestination(''); setFilterPackMethod('');
               }}
               className="w-full sm:w-auto px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-medium transition-colors whitespace-nowrap"
             >

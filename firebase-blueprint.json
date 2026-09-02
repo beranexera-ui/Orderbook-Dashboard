@@ -1,0 +1,11 @@
+{
+  "collections": [
+    {
+      "name": "dashboardData",
+      "securityRules": {
+        "read": "true",
+        "write": "true"
+      }
+    }
+  ]
+}
