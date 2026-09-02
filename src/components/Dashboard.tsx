@@ -5,6 +5,75 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { db } from '../firebase';
 import { doc, setDoc, onSnapshot, writeBatch, collection, getDocs } from 'firebase/firestore';
 
+function MultiSelectDropdown({
+  label,
+  options,
+  selectedValues,
+  onChange
+}: {
+  label: string;
+  options: string[];
+  selectedValues: string[];
+  onChange: (values: string[]) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const toggleOption = (option: string) => {
+    if (selectedValues.includes(option)) {
+      onChange(selectedValues.filter(v => v !== option));
+    } else {
+      onChange([...selectedValues, option]);
+    }
+  };
+
+  const displayText = selectedValues.length === 0 
+    ? label 
+    : selectedValues.length === 1 
+      ? selectedValues[0] 
+      : `${label} (${selectedValues.length})`;
+
+  return (
+    <div className="relative flex-1 sm:min-w-[140px]" ref={containerRef}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between py-2 pl-3 pr-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500 text-slate-700 text-left min-w-[140px]"
+      >
+        <span className="truncate pr-2">{displayText}</span>
+        <svg className={`w-4 h-4 text-slate-400 transition-transform flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+      </button>
+      
+      {isOpen && (
+        <div className="absolute z-50 w-full min-w-[200px] mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
+          <div className="p-2 space-y-1">
+            {options.map(option => (
+              <label key={option} className="flex items-center p-2 hover:bg-slate-50 rounded-lg cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={selectedValues.includes(option)}
+                  onChange={() => toggleOption(option)}
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                />
+                <span className="ml-2 text-sm text-slate-700 truncate">{option}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface ProductionOrder {
   id: string;
   buyer: string;
@@ -43,12 +112,12 @@ export function Dashboard() {
 
   // Filters State
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterBuyer, setFilterBuyer] = useState('');
-  const [filterWeekNo, setFilterWeekNo] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
-  const [filterShipmentMode, setFilterShipmentMode] = useState('');
-  const [filterDestination, setFilterDestination] = useState('');
-  const [filterPackMethod, setFilterPackMethod] = useState('');
+  const [filterBuyer, setFilterBuyer] = useState<string[]>([]);
+  const [filterWeekNo, setFilterWeekNo] = useState<string[]>([]);
+  const [filterStatus, setFilterStatus] = useState<string[]>([]);
+  const [filterShipmentMode, setFilterShipmentMode] = useState<string[]>([]);
+  const [filterDestination, setFilterDestination] = useState<string[]>([]);
+  const [filterPackMethod, setFilterPackMethod] = useState<string[]>([]);
   
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -277,7 +346,7 @@ export function Dashboard() {
               colorCode: row['Color Code'] || '',
               colorName: row['Color Name'] || '',
               destination: row['Destination'] || '',
-              packMethod: row['Pack Method'] || '',
+              packMethod: String(row['Pack Method'] || row['Pack Method '] || '').trim(),
               scheduleNo: row['Schedule No'] || '',
               planDelDate: planDelDate,
               weekNo: weekNo,
@@ -299,12 +368,12 @@ export function Dashboard() {
           
           // Reset states on new upload
           setSearchTerm('');
-          setFilterBuyer('');
-          setFilterWeekNo('');
-          setFilterStatus('');
-          setFilterShipmentMode('');
-          setFilterDestination('');
-          setFilterPackMethod('');
+          setFilterBuyer([]);
+          setFilterWeekNo([]);
+          setFilterStatus([]);
+          setFilterShipmentMode([]);
+          setFilterDestination([]);
+          setFilterPackMethod([]);
 
         } catch (err: any) {
           console.error("Error parsing Excel file", err);
@@ -359,18 +428,20 @@ export function Dashboard() {
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
         );
       
-      const matchesBuyer = filterBuyer === '' || item.buyer === filterBuyer;
-      const matchesWeek = filterWeekNo === '' || item.weekNo === filterWeekNo;
+      const matchesBuyer = filterBuyer.length === 0 || filterBuyer.includes(String(item.buyer));
+      const matchesWeek = filterWeekNo.length === 0 || filterWeekNo.includes(String(item.weekNo));
       
       // Status matching logic (Completed vs Pending vs Shipped)
-      const matchesStatus = filterStatus === '' || 
-        (filterStatus === 'Completed' ? item.statusText === 'Completed' : 
-         filterStatus === 'Shipped' ? item.statusText === 'Shipped' :
-         filterStatus === 'Pending' ? item.statusText.startsWith('Pending') : true);
+      const matchesStatus = filterStatus.length === 0 || filterStatus.some(status => {
+         if (status === 'Completed') return item.statusText === 'Completed';
+         if (status === 'Shipped') return item.statusText === 'Shipped';
+         if (status === 'Pending') return item.statusText.startsWith('Pending');
+         return true;
+      });
         
-      const matchesShipmentMode = filterShipmentMode === '' || item.shipmentMode === filterShipmentMode;
-      const matchesDestination = filterDestination === '' || item.destination === filterDestination;
-      const matchesPackMethod = filterPackMethod === '' || item.packMethod === filterPackMethod;
+      const matchesShipmentMode = filterShipmentMode.length === 0 || filterShipmentMode.includes(String(item.shipmentMode));
+      const matchesDestination = filterDestination.length === 0 || filterDestination.includes(String(item.destination));
+      const matchesPackMethod = filterPackMethod.length === 0 || filterPackMethod.includes(String(item.packMethod));
 
       return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod;
     });
@@ -675,44 +746,54 @@ export function Dashboard() {
             </div>
             
             <div className="flex flex-wrap sm:flex-nowrap gap-3">
-              <select value={filterBuyer} onChange={(e) => setFilterBuyer(e.target.value)} className="flex-1 sm:w-auto py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
-                <option value="">All Buyers</option>
-                {uniqueBuyers.map(b => <option key={b} value={b}>{b}</option>)}
-              </select>
+              <MultiSelectDropdown 
+                label="All Buyers"
+                options={uniqueBuyers}
+                selectedValues={filterBuyer}
+                onChange={setFilterBuyer}
+              />
               
-              <select value={filterWeekNo} onChange={(e) => setFilterWeekNo(e.target.value)} className="flex-1 sm:w-auto py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
-                <option value="">All Weeks</option>
-                {uniqueWeeks.map(w => <option key={w} value={w}>Week {w}</option>)}
-              </select>
+              <MultiSelectDropdown 
+                label="All Weeks"
+                options={uniqueWeeks.map(w => String(w))}
+                selectedValues={filterWeekNo}
+                onChange={setFilterWeekNo}
+              />
 
-              <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="flex-1 sm:w-auto py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
-                <option value="">All Statuses</option>
-                <option value="Shipped">Shipped</option>
-                <option value="Completed">Completed</option>
-                <option value="Pending">Pending</option>
-              </select>
+              <MultiSelectDropdown 
+                label="All Statuses"
+                options={['Shipped', 'Completed', 'Pending']}
+                selectedValues={filterStatus}
+                onChange={setFilterStatus}
+              />
             </div>
           </div>
 
           <div className="flex flex-col sm:flex-row gap-4 items-center">
-            <select value={filterShipmentMode} onChange={(e) => setFilterShipmentMode(e.target.value)} className="w-full sm:flex-1 py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
-              <option value="">All Shipment Modes</option>
-              {uniqueShipmentModes.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
+            <MultiSelectDropdown 
+              label="All Shipment Modes"
+              options={uniqueShipmentModes}
+              selectedValues={filterShipmentMode}
+              onChange={setFilterShipmentMode}
+            />
             
-            <select value={filterDestination} onChange={(e) => setFilterDestination(e.target.value)} className="w-full sm:flex-1 py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
-              <option value="">All Destinations</option>
-              {uniqueDestinations.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
+            <MultiSelectDropdown 
+              label="All Destinations"
+              options={uniqueDestinations}
+              selectedValues={filterDestination}
+              onChange={setFilterDestination}
+            />
 
-            <select value={filterPackMethod} onChange={(e) => setFilterPackMethod(e.target.value)} className="w-full sm:flex-1 py-2 pl-3 pr-8 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500">
-              <option value="">All Pack Methods</option>
-              {uniquePackMethods.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
+            <MultiSelectDropdown 
+              label="All Pack Methods"
+              options={uniquePackMethods}
+              selectedValues={filterPackMethod}
+              onChange={setFilterPackMethod}
+            />
             
             <button 
               onClick={() => {
-                setSearchTerm(''); setFilterBuyer(''); setFilterWeekNo(''); setFilterStatus(''); setFilterShipmentMode(''); setFilterDestination(''); setFilterPackMethod('');
+                setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]);
               }}
               className="w-full sm:w-auto px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-medium transition-colors whitespace-nowrap"
             >
