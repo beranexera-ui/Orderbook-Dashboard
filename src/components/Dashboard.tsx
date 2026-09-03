@@ -100,6 +100,42 @@ export interface ProductionOrder {
   remark?: string;
 }
 
+function RemarkInput({
+  initialValue,
+  rowId,
+  onSave
+}: {
+  initialValue: string;
+  rowId: string;
+  onSave: (id: string, text: string) => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
+
+  return (
+    <input 
+      type="text" 
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => {
+        if (value !== initialValue) {
+          onSave(rowId, value);
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.currentTarget.blur();
+        }
+      }}
+      placeholder="Add remark..."
+      className="w-full text-sm bg-transparent border-0 border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:ring-0 px-1 py-1 transition-colors"
+    />
+  );
+}
+
 export function Dashboard() {
   const [data, setData] = useState<ProductionOrder[] | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -956,15 +992,10 @@ export function Dashboard() {
                         </span>
                       </td>
                       <td className="px-3 py-2.5 border border-slate-200 whitespace-nowrap min-w-[200px]">
-                        <input 
-                          type="text" 
-                          value={remarks[row.id] || ''}
-                          onChange={(e) => {
-                            setRemarks(prev => ({ ...prev, [row.id]: e.target.value }));
-                          }}
-                          onBlur={(e) => handleRemarkChange(row.id, e.target.value)}
-                          placeholder="Add remark..."
-                          className="w-full text-sm bg-transparent border-0 border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:ring-0 px-1 py-1 transition-colors"
+                        <RemarkInput 
+                          initialValue={remarks[row.id] || ''}
+                          rowId={row.id}
+                          onSave={handleRemarkChange}
                         />
                       </td>
                       <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.deliveredQty.toLocaleString()}</td>
