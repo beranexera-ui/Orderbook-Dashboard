@@ -893,10 +893,7 @@ export function Dashboard() {
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Plan Del Date</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center">WEEK NO</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Buyer</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Group Tech Class</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Buyer Division Name</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Style No</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Cust Style No</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">VPO No</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Shipment Mode</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Color Code</th>
@@ -916,7 +913,7 @@ export function Dashboard() {
               <tbody>
                 {paddingTop > 0 && (
                   <tr>
-                    <td colSpan={21} style={{ height: `${paddingTop}px` }}></td>
+                    <td colSpan={18} style={{ height: `${paddingTop}px` }}></td>
                   </tr>
                 )}
                 {virtualRows.length > 0 ? (
@@ -927,17 +924,14 @@ export function Dashboard() {
                       <React.Fragment key={row.id}>
                         {isNewVpo && (
                           <tr className="bg-slate-800">
-                            <td colSpan={21} className="h-[4px] p-0 border-0"></td>
+                            <td colSpan={18} className="h-[4px] p-0 border-0"></td>
                           </tr>
                         )}
                         <tr className="hover:bg-indigo-50/50 transition-colors bg-white">
                           <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.planDelDate}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap text-center font-medium bg-slate-50/50">{row.weekNo}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.buyer}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.groupTechClass}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap truncate max-w-[150px]" title={row.buyerDivisionName}>{row.buyerDivisionName}</td>
                       <td className="px-3 py-2.5 border border-slate-200 font-medium text-slate-900 whitespace-nowrap">{row.styleNo}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.custStyleNo}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.vpoNo}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.shipmentMode}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.colorCode}</td>
