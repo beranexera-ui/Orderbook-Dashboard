@@ -1,9 +1,10 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer, BarChart2, Table } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { db } from '../firebase';
 import { doc, setDoc, onSnapshot, writeBatch, collection, getDocs } from 'firebase/firestore';
+import { KPIView } from './KPIView';
 
 function MultiSelectDropdown({
   label,
@@ -146,6 +147,7 @@ export function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<'table' | 'kpi'>('table');
 
   // Filters State
   const [searchTerm, setSearchTerm] = useState('');
@@ -816,26 +818,54 @@ export function Dashboard() {
               )}
             </p>
           </div>
-          <button 
-            onClick={() => setData(null)}
-            disabled={loadingState !== 'idle'}
-            className="inline-flex items-center px-4 py-2.5 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 shadow-sm transition-all focus:ring-2 focus:ring-slate-900/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
-          >
-            {loadingState !== 'idle' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2" />}
-            {loadingState !== 'idle' ? "Processing..." : "Upload New File"}
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
+              <button
+                onClick={() => setViewMode('table')}
+                className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                  viewMode === 'table' 
+                    ? 'bg-white text-slate-800 shadow-sm border border-slate-200/50' 
+                    : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+                }`}
+              >
+                <Table className="w-4 h-4 mr-1.5" />
+                Data View
+              </button>
+              <button
+                onClick={() => setViewMode('kpi')}
+                className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                  viewMode === 'kpi' 
+                    ? 'bg-white text-slate-800 shadow-sm border border-slate-200/50' 
+                    : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
+                }`}
+              >
+                <BarChart2 className="w-4 h-4 mr-1.5" />
+                KPI Dashboard
+              </button>
+            </div>
+            <button 
+              onClick={() => setData(null)}
+              disabled={loadingState !== 'idle'}
+              className="inline-flex items-center px-4 py-2.5 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 shadow-sm transition-all focus:ring-2 focus:ring-slate-900/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+            >
+              {loadingState !== 'idle' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2" />}
+              {loadingState !== 'idle' ? "Processing..." : "Upload New File"}
+            </button>
+          </div>
         </header>
 
-        {/* Summary Metrics */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <MetricCard title="Completed Schedule Line" value={summary.completedScheduleLines.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-emerald-600" />} color="emerald" />
-          <MetricCard title="Pending Schedule Line" value={summary.pendingScheduleLines.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-amber-600" />} color="amber" />
-          <MetricCard title="Completed VPO" value={summary.completedVPOs.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-blue-600" />} color="blue" />
-          <MetricCard title="Pending VPO" value={summary.pendingVPOs.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-rose-600" />} color="rose" />
-        </div>
+        {viewMode === 'table' ? (
+          <>
+            {/* Summary Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <MetricCard title="Completed Schedule Line" value={summary.completedScheduleLines.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-emerald-600" />} color="emerald" />
+              <MetricCard title="Pending Schedule Line" value={summary.pendingScheduleLines.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-amber-600" />} color="amber" />
+              <MetricCard title="Completed VPO" value={summary.completedVPOs.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-blue-600" />} color="blue" />
+              <MetricCard title="Pending VPO" value={summary.pendingVPOs.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-rose-600" />} color="rose" />
+            </div>
 
-        {/* Filters and Search Bar */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4">
+            {/* Filters and Search Bar */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex flex-col lg:flex-row gap-4">
             <div className="relative w-full lg:w-80 shrink-0">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -1019,6 +1049,10 @@ export function Dashboard() {
             </table>
           </div>
         </div>
+          </>
+        ) : (
+          <KPIView data={data} />
+        )}
 
       </div>
 
