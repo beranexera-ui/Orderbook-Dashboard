@@ -180,6 +180,24 @@ export function KPIView({ data }: KPIViewProps) {
     });
   }, [kpiData.topPendingVPOs, vpoSearchQuery]);
 
+  const groupedPendingVPOs = useMemo(() => {
+    const groups = new Map<string, VPODetail[]>();
+    filteredTopPendingVPOs.forEach(vpo => {
+      const buyer = vpo.buyer || 'Unknown Buyer';
+      if (!groups.has(buyer)) {
+        groups.set(buyer, []);
+      }
+      groups.get(buyer)!.push(vpo);
+    });
+    
+    // Sort buyers by total pending qty descending
+    return Array.from(groups.entries()).sort((a, b) => {
+       const aPending = a[1].reduce((sum, v) => sum + v.pendingQty, 0);
+       const bPending = b[1].reduce((sum, v) => sum + v.pendingQty, 0);
+       return bPending - aPending;
+    });
+  }, [filteredTopPendingVPOs]);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       
@@ -377,38 +395,47 @@ export function KPIView({ data }: KPIViewProps) {
           </div>
         </div>
         
-        <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-400">
-          {filteredTopPendingVPOs.map((vpo, idx) => (
-            <div 
-              key={idx} 
-              onClick={() => setSelectedVPO(vpo)}
-              className="flex flex-col sm:flex-row sm:items-center gap-4 p-4 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer"
-            >
-               <div className="w-full sm:w-1/4">
-                  <p className="text-sm font-bold text-slate-800">{vpo.vpo}</p>
-                  <p className="text-xs text-slate-500">{vpo.buyer} • {vpo.style}</p>
-                  {vpo.schedules.length > 0 && (
-                    <p className="text-[10px] text-slate-400 mt-0.5 truncate">Sch: {vpo.schedules.map(s => s.scheduleNo).join(', ')}</p>
-                  )}
-               </div>
-               
-               <div className="w-full sm:w-2/4 flex items-center gap-4">
-                  <div className="flex-grow bg-slate-200 rounded-full h-2.5 overflow-hidden">
-                     <div 
-                       className={`h-2.5 rounded-full ${vpo.progress < 30 ? 'bg-rose-500' : vpo.progress < 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                       style={{ width: `${Math.min(100, vpo.progress)}%` }}
-                     ></div>
+        <div className="space-y-6 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-400">
+          {groupedPendingVPOs.map(([buyer, vpos], groupIdx) => (
+            <div key={groupIdx} className="space-y-3">
+              <h4 className="text-sm font-bold text-slate-700 bg-slate-100 px-3 py-1.5 rounded-lg inline-block">
+                {buyer} <span className="text-slate-500 font-normal text-xs ml-1">({vpos.length} VPOs)</span>
+              </h4>
+              <div className="space-y-3 pl-2 border-l-2 border-slate-100">
+                {vpos.map((vpo, idx) => (
+                  <div 
+                    key={idx} 
+                    onClick={() => setSelectedVPO(vpo)}
+                    className="flex flex-col sm:flex-row sm:items-center gap-4 p-4 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer"
+                  >
+                     <div className="w-full sm:w-1/4">
+                        <p className="text-sm font-bold text-slate-800">{vpo.vpo}</p>
+                        <p className="text-xs text-slate-500">Style: {vpo.style}</p>
+                        {vpo.schedules.length > 0 && (
+                          <p className="text-[10px] text-slate-400 mt-0.5 truncate">Sch: {vpo.schedules.map(s => s.scheduleNo).join(', ')}</p>
+                        )}
+                     </div>
+                     
+                     <div className="w-full sm:w-2/4 flex items-center gap-4">
+                        <div className="flex-grow bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                           <div 
+                             className={`h-2.5 rounded-full ${vpo.progress < 30 ? 'bg-rose-500' : vpo.progress < 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                             style={{ width: `${Math.min(100, vpo.progress)}%` }}
+                           ></div>
+                        </div>
+                        <span className="text-xs font-bold text-slate-700 min-w-[3rem] text-right">{vpo.progress.toFixed(0)}%</span>
+                     </div>
+                     
+                     <div className="w-full sm:w-1/4 text-left sm:text-right flex flex-col sm:items-end">
+                        <p className="text-sm font-bold text-amber-600">{vpo.pendingQty.toLocaleString()} Pending</p>
+                        <p className="text-xs text-slate-400">{vpo.sewOutQty.toLocaleString()} / {vpo.coQty.toLocaleString()} Completed</p>
+                     </div>
                   </div>
-                  <span className="text-xs font-bold text-slate-700 min-w-[3rem] text-right">{vpo.progress.toFixed(0)}%</span>
-               </div>
-               
-               <div className="w-full sm:w-1/4 text-left sm:text-right flex flex-col sm:items-end">
-                  <p className="text-sm font-bold text-amber-600">{vpo.pendingQty.toLocaleString()} Pending</p>
-                  <p className="text-xs text-slate-400">{vpo.sewOutQty.toLocaleString()} / {vpo.coQty.toLocaleString()} Completed</p>
-               </div>
+                ))}
+              </div>
             </div>
           ))}
-          {filteredTopPendingVPOs.length === 0 && (
+          {groupedPendingVPOs.length === 0 && (
             <div className="text-center py-8 text-slate-500 text-sm">
               No pending VPOs found matching your search.
             </div>
