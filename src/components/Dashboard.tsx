@@ -47,17 +47,17 @@ function MultiSelectDropdown({
     <div className="relative flex-1 sm:min-w-[140px]" ref={containerRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between py-2 pl-3 pr-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500 text-slate-700 text-left min-w-[140px]"
+        className="w-full flex items-center justify-between py-2 pl-3 pr-3 bg-slate-50 hover:bg-slate-100/50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-700 text-left min-w-[140px] transition-all"
       >
-        <span className="truncate pr-2">{displayText}</span>
+        <span className="truncate pr-2 font-medium">{displayText}</span>
         <svg className={`w-4 h-4 text-slate-400 transition-transform flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
       </button>
       
       {isOpen && (
-        <div className="absolute z-50 w-full min-w-[200px] mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
-          <div className="p-2 space-y-1">
+        <div className="absolute z-50 w-full min-w-[200px] mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+          <div className="p-1.5 space-y-0.5">
             {options.map(option => (
-              <label key={option} className="flex items-center p-2 hover:bg-slate-50 rounded-lg cursor-pointer">
+              <label key={option} className="flex items-center p-2 hover:bg-slate-50 rounded-md cursor-pointer transition-colors">
                 <input 
                   type="checkbox" 
                   checked={selectedValues.includes(option)}
@@ -798,20 +798,20 @@ export function Dashboard() {
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-4 md:p-8">
       <div className="mx-auto space-y-6" style={{ maxWidth: '1600px' }}>
         
-        <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+        <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">Production Overview</h1>
-              <span className="bg-indigo-50 text-indigo-700 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-indigo-100 uppercase tracking-wide">
+              <span className="bg-indigo-50 text-indigo-700 text-[9px] font-bold px-2 py-0.5 rounded border border-indigo-100 uppercase tracking-widest">
                 Powered by DILEEPA WICKRAMASINGHE
               </span>
             </div>
-            <p className="text-slate-500 mt-1 text-sm flex items-center gap-2">
+            <p className="text-slate-500 mt-1.5 text-sm flex items-center gap-2">
               <span>Item-level fulfillment details for the next 6 weeks.</span>
               {lastUpdated && (
                 <>
                   <span className="text-slate-300">•</span>
-                  <span className="text-slate-600 font-medium">OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                  <span className="text-slate-600 font-medium flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</span>
                 </>
               )}
             </p>
@@ -819,7 +819,7 @@ export function Dashboard() {
           <button 
             onClick={() => setData(null)}
             disabled={loadingState !== 'idle'}
-            className="inline-flex items-center px-4 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-medium hover:bg-slate-800 shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center px-4 py-2.5 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 shadow-sm transition-all focus:ring-2 focus:ring-slate-900/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
           >
             {loadingState !== 'idle' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2" />}
             {loadingState !== 'idle' ? "Processing..." : "Upload New File"}
@@ -828,14 +828,14 @@ export function Dashboard() {
 
         {/* Summary Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <MetricCard title="Completed Schedule Line" value={summary.completedScheduleLines.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-emerald-500" />} />
-          <MetricCard title="Pending Schedule Line" value={summary.pendingScheduleLines.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} />
-          <MetricCard title="Completed VPO" value={summary.completedVPOs.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-blue-500" />} />
-          <MetricCard title="Pending VPO" value={summary.pendingVPOs.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-orange-500" />} />
+          <MetricCard title="Completed Schedule Line" value={summary.completedScheduleLines.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-emerald-600" />} color="emerald" />
+          <MetricCard title="Pending Schedule Line" value={summary.pendingScheduleLines.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-amber-600" />} color="amber" />
+          <MetricCard title="Completed VPO" value={summary.completedVPOs.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-blue-600" />} color="blue" />
+          <MetricCard title="Pending VPO" value={summary.pendingVPOs.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-rose-600" />} color="rose" />
         </div>
 
         {/* Filters and Search Bar */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <div className="flex flex-col lg:flex-row gap-4">
             <div className="relative w-full lg:w-80 shrink-0">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -844,7 +844,7 @@ export function Dashboard() {
                 placeholder="Search anything (style, color, vpo)..." 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 hover:bg-slate-100/50 focus:bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
               />
             </div>
             
@@ -905,14 +905,14 @@ export function Dashboard() {
               onClick={() => {
                 setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]); setFilterRemark([]);
               }}
-              className="w-full sm:w-auto px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-medium transition-colors whitespace-nowrap"
+              className="w-full sm:w-auto px-5 py-2 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
             >
               Clear Filters
             </button>
             <button
               onClick={() => setShowPrintModal(true)}
               disabled={filteredItems.length === 0}
-              className="w-full sm:w-auto px-5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-sm font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-indigo-100"
+              className="w-full sm:w-auto px-5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-indigo-100"
             >
               <Printer className="w-4 h-4 mr-2" />
               Print
@@ -921,10 +921,10 @@ export function Dashboard() {
         </div>
 
         {/* Detailed Data Table */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div ref={tableContainerRef} className="overflow-auto max-h-[70vh]">
             <table className="w-full text-sm text-left border-collapse relative">
-              <thead className="text-xs text-slate-600 font-semibold bg-slate-100 border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+              <thead className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold bg-slate-50/90 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-20 shadow-sm">
                 <tr>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Plan Del Date</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center">WEEK NO</th>
@@ -1055,15 +1055,22 @@ export function Dashboard() {
   );
 }
 
-function MetricCard({ title, value, icon }: { title: string, value: string, icon: React.ReactNode }) {
+function MetricCard({ title, value, icon, color }: { title: string, value: string, icon: React.ReactNode, color: 'emerald' | 'amber' | 'blue' | 'rose' }) {
+  const bgColors = {
+    emerald: 'bg-emerald-50 border-emerald-100/50',
+    amber: 'bg-amber-50 border-amber-100/50',
+    blue: 'bg-blue-50 border-blue-100/50',
+    rose: 'bg-rose-50 border-rose-100/50',
+  };
+
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm flex items-center gap-4">
-      <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+    <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow duration-200 flex items-center gap-4 group">
+      <div className={cn("p-3 rounded-lg border transition-colors", bgColors[color])}>
         {icon}
       </div>
       <div>
-        <p className="text-[11px] font-semibold text-slate-500 mb-0.5 uppercase tracking-wider">{title}</p>
-        <p className="text-2xl font-bold text-slate-900">{value}</p>
+        <p className="text-[11px] font-semibold text-slate-500 mb-0.5 uppercase tracking-wider group-hover:text-slate-600 transition-colors">{title}</p>
+        <p className="text-2xl font-bold text-slate-900 tracking-tight">{value}</p>
       </div>
     </div>
   );
