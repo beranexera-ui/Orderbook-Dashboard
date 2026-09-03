@@ -185,8 +185,25 @@ export function Dashboard() {
           try {
             const snapshot = await getDocs(collection(db, `uploads/${currentUploadId}/orders`));
             const loadedData: ProductionOrder[] = [];
+            
+            const excludedTerms = [
+              'SIZE SET', 'BLACK SEAL', 'SAMPLES_PRESETTING', 'SAMPLES_PP', 'PP_SAMPLE',
+              'MTL SAMPLE', 'PP SAMPLE', 'PP SAMPLE PRNT', 'PRE SETTING', 'SAMPLE PP',
+              'WASH & TOP', 'PPZ', 'TC-PP', 'TC-PPZ', 'MTL', 'TLT'
+            ];
+
             snapshot.forEach(d => {
-               loadedData.push(d.data() as ProductionOrder);
+               const order = d.data() as ProductionOrder;
+               const hasExcludedTerm = Object.values(order).some(val => {
+                 const strVal = String(val).trim().toUpperCase();
+                 if (excludedTerms.includes(strVal)) return true;
+                 if (/^VPO(_|\d)/.test(strVal)) return true;
+                 return false;
+               });
+               
+               if (!hasExcludedTerm) {
+                 loadedData.push(order);
+               }
             });
             loadedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
             setData(loadedData);
