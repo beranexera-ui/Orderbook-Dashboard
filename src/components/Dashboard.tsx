@@ -95,6 +95,7 @@ export interface ProductionOrder {
   cumSewInQty: number;
   cumSewOutQty: number;
   cumSewOutRejQty: number;
+  cumCTNQty: number;
   statusText: string;
   deliveredQty: number;
   orderToShippedPct: number;
@@ -399,6 +400,7 @@ export function Dashboard() {
               cumSewInQty: Number(row['Cum Sew In Qty']) || 0,
               cumSewOutQty: cumSewOutQty,
               cumSewOutRejQty: Number(row['Cum Sew Out Rej Qty']) || 0,
+              cumCTNQty: Number(row['Cum CTN Qty']) || 0,
               statusText: statusText,
               deliveredQty: Number(row['Delivered Qty']) || 0,
               orderToShippedPct: Number(row['Order to shipped %']) || 0,
@@ -635,7 +637,7 @@ export function Dashboard() {
           <td>${item.destination || ''}</td>
           <td>${item.packMethod || ''}</td>
           <td>${item.scheduleNo || ''}</td>
-          <td>${item.coQty != null ? item.coQty.toLocaleString() : ''}</td>
+          <td>${item.coQty != null ? item.coQty?.toLocaleString() || "0" : ''}</td>
           <td>${item.statusText || ''}</td>
         </tr>
       `;
@@ -666,7 +668,7 @@ export function Dashboard() {
       <body>
         <div class="header">
           <h2>Production Orders Report</h2>
-          <div class="print-time">Printed on: ${new Date().toLocaleString()} &bull; Total Records: ${filteredItems.length}</div>
+          <div class="print-time">Printed on: ${new Date()?.toLocaleString() || "0"} &bull; Total Records: ${filteredItems.length}</div>
         </div>
         <table>
           <thead>
@@ -756,7 +758,7 @@ export function Dashboard() {
                       ></div>
                     </div>
                     <p className="text-[10px] font-medium text-slate-400 mt-2 text-center">
-                      {uploadProgress.total > 0 ? `${uploadProgress.current.toLocaleString()} / ${uploadProgress.total.toLocaleString()} rows synced` : "Preparing sync..."}
+                      {uploadProgress.total > 0 ? `${uploadProgress.current?.toLocaleString() || "0"} / ${uploadProgress.total?.toLocaleString() || "0"} rows synced` : "Preparing sync..."}
                     </p>
                   </div>
                 )}
@@ -858,10 +860,10 @@ export function Dashboard() {
           <>
             {/* Summary Metrics */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <MetricCard title="Completed Schedule Line" value={summary.completedScheduleLines.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-emerald-600" />} color="emerald" />
-              <MetricCard title="Pending Schedule Line" value={summary.pendingScheduleLines.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-amber-600" />} color="amber" />
-              <MetricCard title="Completed VPO" value={summary.completedVPOs.toLocaleString()} icon={<CheckCircle className="w-5 h-5 text-blue-600" />} color="blue" />
-              <MetricCard title="Pending VPO" value={summary.pendingVPOs.toLocaleString()} icon={<AlertTriangle className="w-5 h-5 text-rose-600" />} color="rose" />
+              <MetricCard title="Completed Schedule Line" value={summary.completedScheduleLines?.toLocaleString() || "0"} icon={<CheckCircle className="w-5 h-5 text-emerald-600" />} color="emerald" />
+              <MetricCard title="Pending Schedule Line" value={summary.pendingScheduleLines?.toLocaleString() || "0"} icon={<AlertTriangle className="w-5 h-5 text-amber-600" />} color="amber" />
+              <MetricCard title="Completed VPO" value={summary.completedVPOs?.toLocaleString() || "0"} icon={<CheckCircle className="w-5 h-5 text-blue-600" />} color="blue" />
+              <MetricCard title="Pending VPO" value={summary.pendingVPOs?.toLocaleString() || "0"} icon={<AlertTriangle className="w-5 h-5 text-rose-600" />} color="rose" />
             </div>
 
             {/* Filters and Search Bar */}
@@ -970,7 +972,7 @@ export function Dashboard() {
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right">CO Qty</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum Sew In Qty</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum SewOut Qty</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum Sew Out Rej</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum CTN Qty</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center">Status</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Remark</th>
                   <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right">Delivered Qty</th>
@@ -1006,10 +1008,10 @@ export function Dashboard() {
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap truncate max-w-[150px]" title={row.packMethod}>{row.packMethod}</td>
                       <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.scheduleNo}</td>
                       
-                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.coQty.toLocaleString()}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-right text-slate-600 whitespace-nowrap bg-slate-50/50">{row.cumSewInQty.toLocaleString()}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-indigo-700 whitespace-nowrap bg-slate-50/50">{row.cumSewOutQty.toLocaleString()}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-right text-rose-600 whitespace-nowrap bg-slate-50/50">{row.cumSewOutRejQty.toLocaleString()}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.coQty?.toLocaleString() || "0"}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-right text-slate-600 whitespace-nowrap bg-slate-50/50">{row.cumSewInQty?.toLocaleString() || "0"}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-indigo-700 whitespace-nowrap bg-slate-50/50">{row.cumSewOutQty?.toLocaleString() || "0"}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-right text-slate-700 whitespace-nowrap bg-slate-50/50">{row.cumCTNQty?.toLocaleString() || "0"}</td>
                       
                       <td className="px-3 py-2.5 border border-slate-200 text-center whitespace-nowrap">
                         <span className={cn(
@@ -1028,7 +1030,7 @@ export function Dashboard() {
                           onSave={handleRemarkChange}
                         />
                       </td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.deliveredQty.toLocaleString()}</td>
+                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.deliveredQty?.toLocaleString() || "0"}</td>
                       </tr>
                       </React.Fragment>
                     );

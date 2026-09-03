@@ -15,6 +15,7 @@ export type ScheduleDetail = {
   coQty: number;
   sewOutQty: number;
   pendingQty: number;
+  rejects: number;
 };
 
 export type VPODetail = {
@@ -24,6 +25,7 @@ export type VPODetail = {
   coQty: number;
   sewOutQty: number;
   pendingQty: number;
+  rejects: number;
   progress: number;
   schedules: ScheduleDetail[];
 };
@@ -112,18 +114,20 @@ export function KPIView({ data }: KPIViewProps) {
 
       if (item.vpoNo) {
         if (!vpoMap.has(item.vpoNo)) {
-          vpoMap.set(item.vpoNo, { vpo: item.vpoNo, buyer: item.buyer || '', style: item.styleNo || '', coQty: 0, sewOutQty: 0, schedules: new Map() });
+          vpoMap.set(item.vpoNo, { vpo: item.vpoNo, buyer: item.buyer || '', style: item.styleNo || '', coQty: 0, sewOutQty: 0, rejects: 0, schedules: new Map() });
         }
         const v = vpoMap.get(item.vpoNo)!;
         v.coQty += co;
         v.sewOutQty += sewOut;
+        v.rejects += rej;
         if (item.scheduleNo) {
           if (!v.schedules.has(item.scheduleNo)) {
-            v.schedules.set(item.scheduleNo, { scheduleNo: item.scheduleNo, coQty: 0, sewOutQty: 0, pendingQty: 0 });
+            v.schedules.set(item.scheduleNo, { scheduleNo: item.scheduleNo, coQty: 0, sewOutQty: 0, pendingQty: 0, rejects: 0 });
           }
           const s = v.schedules.get(item.scheduleNo)!;
           s.coQty += co;
           s.sewOutQty += sewOut;
+          s.rejects += rej;
           s.pendingQty = Math.max(0, s.coQty - s.sewOutQty);
         }
       }
@@ -144,6 +148,25 @@ export function KPIView({ data }: KPIViewProps) {
     const topPendingBuyers = [...buyerData]
       .sort((a, b) => b.pendingQty - a.pendingQty)
       .slice(0, 7);
+
+    let vpoCountAll = 0, schCountAll = 0;
+    let vpoCountSewOut = 0, schCountSewOut = 0;
+    let vpoCountPending = 0, schCountPending = 0;
+    let vpoCountRejects = 0, schCountRejects = 0;
+
+    for (const v of vpoMap.values()) {
+      vpoCountAll++;
+      if (v.sewOutQty > 0) vpoCountSewOut++;
+      if (v.coQty > v.sewOutQty) vpoCountPending++;
+      if (v.rejects > 0) vpoCountRejects++;
+      
+      for (const s of v.schedules.values()) {
+        schCountAll++;
+        if (s.sewOutQty > 0) schCountSewOut++;
+        if (s.pendingQty > 0) schCountPending++;
+        if (s.rejects > 0) schCountRejects++;
+      }
+    }
 
     const topPendingVPOs: VPODetail[] = Array.from(vpoMap.values())
       .map(v => ({
@@ -166,7 +189,13 @@ export function KPIView({ data }: KPIViewProps) {
       rejectionRate,
       topCompletedBuyers,
       topPendingBuyers,
-      topPendingVPOs
+      topPendingVPOs,
+      counts: {
+        all: { vpo: vpoCountAll, sch: schCountAll },
+        sewOut: { vpo: vpoCountSewOut, sch: schCountSewOut },
+        pending: { vpo: vpoCountPending, sch: schCountPending },
+        rejects: { vpo: vpoCountRejects, sch: schCountRejects }
+      }
     };
   }, [data, selectedWeek, selectedBuyer]);
 
@@ -252,7 +281,12 @@ export function KPIView({ data }: KPIViewProps) {
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total CO Qty</p>
               <Package className="w-4 h-4 text-blue-500" />
             </div>
-            <p className="text-3xl font-black text-slate-900">{kpiData.totalCOQty.toLocaleString()}</p>
+            <p className="text-3xl font-black text-slate-900">{kpiData.totalCOQty?.toLocaleString() || "0"}</p>
+            <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
+              <span>VPOs: <span className="text-slate-700">{kpiData.counts.all.vpo}</span></span>
+              <span className="w-[1px] h-3 bg-slate-200"></span>
+              <span>Schedules: <span className="text-slate-700">{kpiData.counts.all.sch}</span></span>
+            </div>
           </div>
         </div>
         
@@ -264,7 +298,12 @@ export function KPIView({ data }: KPIViewProps) {
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Completed (Sew Out)</p>
               <CheckCircle className="w-4 h-4 text-emerald-500" />
             </div>
-            <p className="text-3xl font-black text-slate-900">{kpiData.totalSewOut.toLocaleString()}</p>
+            <p className="text-3xl font-black text-slate-900">{kpiData.totalSewOut?.toLocaleString() || "0"}</p>
+            <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
+              <span>VPOs: <span className="text-slate-700">{kpiData.counts.sewOut.vpo}</span></span>
+              <span className="w-[1px] h-3 bg-slate-200"></span>
+              <span>Schedules: <span className="text-slate-700">{kpiData.counts.sewOut.sch}</span></span>
+            </div>
           </div>
         </div>
 
@@ -276,7 +315,12 @@ export function KPIView({ data }: KPIViewProps) {
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Pending Production</p>
               <AlertCircle className="w-4 h-4 text-amber-500" />
             </div>
-            <p className="text-3xl font-black text-slate-900">{kpiData.totalPending.toLocaleString()}</p>
+            <p className="text-3xl font-black text-slate-900">{kpiData.totalPending?.toLocaleString() || "0"}</p>
+            <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
+              <span>VPOs: <span className="text-slate-700">{kpiData.counts.pending.vpo}</span></span>
+              <span className="w-[1px] h-3 bg-slate-200"></span>
+              <span>Schedules: <span className="text-slate-700">{kpiData.counts.pending.sch}</span></span>
+            </div>
           </div>
         </div>
 
@@ -288,7 +332,12 @@ export function KPIView({ data }: KPIViewProps) {
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Sew Out Rejects</p>
               <AlertTriangle className="w-4 h-4 text-rose-500" />
             </div>
-            <p className="text-3xl font-black text-slate-900">{kpiData.totalRejects.toLocaleString()} <span className="text-sm font-semibold text-rose-500 ml-1">({kpiData.rejectionRate.toFixed(1)}%)</span></p>
+            <p className="text-3xl font-black text-slate-900">{kpiData.totalRejects?.toLocaleString() || "0"} <span className="text-sm font-semibold text-rose-500 ml-1">({kpiData.rejectionRate.toFixed(1)}%)</span></p>
+            <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
+              <span>VPOs: <span className="text-slate-700">{kpiData.counts.rejects.vpo}</span></span>
+              <span className="w-[1px] h-3 bg-slate-200"></span>
+              <span>Schedules: <span className="text-slate-700">{kpiData.counts.rejects.sch}</span></span>
+            </div>
           </div>
         </div>
 
@@ -302,7 +351,7 @@ export function KPIView({ data }: KPIViewProps) {
             <h3 className="text-2xl font-black text-white">{kpiData.overallProgress.toFixed(1)}% <span className="text-sm font-medium text-slate-400 ml-2 font-normal">Completed</span></h3>
           </div>
           <div className="text-right">
-            <p className="text-sm text-slate-300"><span className="font-bold text-white">{kpiData.totalSewIn.toLocaleString()}</span> Items currently Sewn In</p>
+            <p className="text-sm text-slate-300"><span className="font-bold text-white">{kpiData.totalSewIn?.toLocaleString() || "0"}</span> Items currently Sewn In</p>
           </div>
         </div>
         <div className="w-full bg-slate-700 rounded-full h-3 overflow-hidden">
@@ -427,8 +476,8 @@ export function KPIView({ data }: KPIViewProps) {
                      </div>
                      
                      <div className="w-full sm:w-1/4 text-left sm:text-right flex flex-col sm:items-end">
-                        <p className="text-sm font-bold text-amber-600">{vpo.pendingQty.toLocaleString()} Pending</p>
-                        <p className="text-xs text-slate-400">{vpo.sewOutQty.toLocaleString()} / {vpo.coQty.toLocaleString()} Completed</p>
+                        <p className="text-sm font-bold text-amber-600">{vpo.pendingQty?.toLocaleString() || "0"} Pending</p>
+                        <p className="text-xs text-slate-400">{vpo.sewOutQty?.toLocaleString() || "0"} / {vpo.coQty?.toLocaleString() || "0"} Completed</p>
                      </div>
                   </div>
                 ))}
@@ -467,15 +516,15 @@ export function KPIView({ data }: KPIViewProps) {
               <div className="grid grid-cols-3 gap-4 mb-6">
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Total Order</p>
-                  <p className="text-2xl font-bold text-slate-800">{selectedVPO.coQty.toLocaleString()}</p>
+                  <p className="text-2xl font-bold text-slate-800">{selectedVPO.coQty?.toLocaleString() || "0"}</p>
                 </div>
                 <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
                   <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wider mb-1">Sew Out</p>
-                  <p className="text-2xl font-bold text-emerald-700">{selectedVPO.sewOutQty.toLocaleString()}</p>
+                  <p className="text-2xl font-bold text-emerald-700">{selectedVPO.sewOutQty?.toLocaleString() || "0"}</p>
                 </div>
                 <div className="bg-amber-50 p-4 rounded-xl border border-amber-100">
                   <p className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-1">Pending</p>
-                  <p className="text-2xl font-bold text-amber-700">{selectedVPO.pendingQty.toLocaleString()}</p>
+                  <p className="text-2xl font-bold text-amber-700">{selectedVPO.pendingQty?.toLocaleString() || "0"}</p>
                 </div>
               </div>
 
@@ -497,15 +546,15 @@ export function KPIView({ data }: KPIViewProps) {
                       <div className="flex items-center gap-6 text-sm">
                         <div className="text-right">
                           <p className="text-xs text-slate-400 uppercase">Order</p>
-                          <p className="font-semibold text-slate-700">{sch.coQty.toLocaleString()}</p>
+                          <p className="font-semibold text-slate-700">{sch.coQty?.toLocaleString() || "0"}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-xs text-emerald-500 uppercase">Sew Out</p>
-                          <p className="font-semibold text-emerald-600">{sch.sewOutQty.toLocaleString()}</p>
+                          <p className="font-semibold text-emerald-600">{sch.sewOutQty?.toLocaleString() || "0"}</p>
                         </div>
                         <div className="text-right w-16">
                           <p className="text-xs text-amber-500 uppercase">Pending</p>
-                          <p className="font-bold text-amber-600">{sch.pendingQty.toLocaleString()}</p>
+                          <p className="font-bold text-amber-600">{sch.pendingQty?.toLocaleString() || "0"}</p>
                         </div>
                       </div>
                     </div>
