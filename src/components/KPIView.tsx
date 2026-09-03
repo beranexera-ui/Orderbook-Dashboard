@@ -199,7 +199,7 @@ export function KPIView({ data }: KPIViewProps) {
             <select 
               value={selectedBuyer} 
               onChange={(e) => setSelectedBuyer(e.target.value)}
-              className="bg-transparent border-none text-sm font-semibold focus:ring-0 text-slate-700 py-1.5 pl-2 pr-8 w-full cursor-pointer"
+              className="bg-transparent border-none text-sm font-semibold focus:outline-none focus:ring-0 text-slate-700 py-1.5 pl-2 pr-8 w-full cursor-pointer"
             >
               <option value="All">All Buyers</option>
               {availableBuyers.map(b => (
@@ -212,7 +212,7 @@ export function KPIView({ data }: KPIViewProps) {
             <select 
               value={selectedWeek} 
               onChange={(e) => setSelectedWeek(e.target.value)}
-              className="bg-transparent border-none text-sm font-semibold focus:ring-0 text-slate-700 py-1.5 pl-2 pr-8 w-full cursor-pointer"
+              className="bg-transparent border-none text-sm font-semibold focus:outline-none focus:ring-0 text-slate-700 py-1.5 pl-2 pr-8 w-full cursor-pointer"
             >
               <option value="All">All Weeks</option>
               {availableWeeks.map(w => (
@@ -359,7 +359,7 @@ export function KPIView({ data }: KPIViewProps) {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
             <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-               <AlertCircle className="w-5 h-5 text-amber-500" /> Action Required: Critical Pending VPOs
+               <AlertCircle className="w-5 h-5 text-amber-500" /> Action Required: Critical Pending VPOs ({filteredTopPendingVPOs.length})
             </h3>
             <p className="text-xs text-slate-500 mt-1">Individual VPOs with the highest remaining production volume</p>
           </div>

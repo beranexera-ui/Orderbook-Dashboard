@@ -300,7 +300,7 @@ export function Dashboard() {
           const excludedTerms = [
             'SIZE SET', 'BLACK SEAL', 'SAMPLES_PRESETTING', 'SAMPLES_PP', 'PP_SAMPLE',
             'MTL SAMPLE', 'PP SAMPLE', 'PP SAMPLE PRNT', 'PRE SETTING', 'SAMPLE PP',
-            'WASH & TOP', 'PPZ', 'TC-PP', 'TC-PPZ'
+            'WASH & TOP', 'PPZ', 'TC-PP', 'TC-PPZ', 'MTL'
           ];
 
           const filteredData = jsonData.filter((row: any) => {
