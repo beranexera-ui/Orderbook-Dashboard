@@ -304,6 +304,25 @@ export function Dashboard() {
             return;
           }
 
+          const getVal = (row: any, searchKeys: string[]) => {
+            const normKeys = searchKeys.map(k => k.toLowerCase().replace(/\s+/g, ''));
+            for (const key of Object.keys(row)) {
+              const normKey = key.toLowerCase().replace(/\s+/g, '');
+              if (normKeys.includes(normKey)) {
+                return row[key];
+              }
+            }
+            return undefined;
+          };
+
+          const getNum = (row: any, searchKeys: string[]) => {
+            const val = getVal(row, searchKeys);
+            if (val == null || val === '') return 0;
+            if (typeof val === 'number') return val;
+            const parsed = Number(String(val).replace(/,/g, ''));
+            return isNaN(parsed) ? 0 : parsed;
+          };
+
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           
@@ -371,9 +390,9 @@ export function Dashboard() {
               weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7).toString();
             }
 
-            const coQty = Number(row['CO Qty']) || 0;
-            const cumSewOutQty = Number(row['Cum SewOut Qty']) || 0;
-            const deliveredQty = Number(row['Delivered Qty']) || 0;
+            const coQty = getNum(row, ['CO Qty', 'CO QTY', 'co qty']);
+            const cumSewOutQty = getNum(row, ['Cum SewOut Qty', 'Cum Sew Out Qty', 'CUM SEWOUT QTY']);
+            const deliveredQty = getNum(row, ['Delivered Qty', 'DELIVERED QTY', 'delivered qty']);
             const pendingQty = coQty - cumSewOutQty;
             
             let statusText = '';
@@ -385,11 +404,11 @@ export function Dashboard() {
               statusText = `Pending - ${pendingQty}`;
             }
 
-            const vpoStr = String(row['VPO No'] || '').trim();
-            const schedStr = String(row['Schedule No'] || '').trim();
-            const styleStr = String(row['Style No'] || '').trim();
-            const colorStr = String(row['Color Code'] || '').trim();
-            const destStr = String(row['Destination'] || '').trim();
+            const vpoStr = String(getVal(row, ['VPO No', 'vpo no']) || '').trim();
+            const schedStr = String(getVal(row, ['Schedule No', 'schedule no']) || '').trim();
+            const styleStr = String(getVal(row, ['Style No', 'style no']) || '').trim();
+            const colorStr = String(getVal(row, ['Color Code', 'color code']) || '').trim();
+            const destStr = String(getVal(row, ['Destination', 'destination']) || '').trim();
             
             // Create a safe, stable ID for Firestore
             const stableId = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}_${planDelDate}`.replace(/[^a-zA-Z0-9_-]/g, '-');
@@ -399,28 +418,28 @@ export function Dashboard() {
 
             return {
               id: finalId,
-              buyer: row['Buyer'] || '',
-              groupTechClass: row['Group Tech Class'] || '',
-              buyerDivisionName: row['Buyer Division Name'] || '',
-              styleNo: row['Style No'] || '',
-              custStyleNo: row['Cust Style No'] || '',
-              vpoNo: row['VPO No'] || '',
-              shipmentMode: row['Shipment Mode'] || '',
-              colorCode: row['Color Code'] || '',
-              colorName: row['Color Name'] || '',
-              destination: row['Destination'] || '',
-              packMethod: String(row['Pack Method'] || row['Pack Method '] || '').trim(),
-              scheduleNo: row['Schedule No'] || '',
+              buyer: getVal(row, ['Buyer']) || '',
+              groupTechClass: getVal(row, ['Group Tech Class']) || '',
+              buyerDivisionName: getVal(row, ['Buyer Division Name']) || '',
+              styleNo: styleStr,
+              custStyleNo: getVal(row, ['Cust Style No']) || '',
+              vpoNo: vpoStr,
+              shipmentMode: getVal(row, ['Shipment Mode']) || '',
+              colorCode: colorStr,
+              colorName: getVal(row, ['Color Name']) || '',
+              destination: destStr,
+              packMethod: String(getVal(row, ['Pack Method', 'Pack Method ']) || '').trim(),
+              scheduleNo: schedStr,
               planDelDate: planDelDate,
               weekNo: weekNo,
               coQty: coQty,
-              cumSewInQty: Number(row['Cum Sew In Qty']) || 0,
+              cumSewInQty: getNum(row, ['Cum Sew In Qty', 'Cum SewIn Qty']),
               cumSewOutQty: cumSewOutQty,
-              cumSewOutRejQty: Number(row['Cum Sew Out Rej Qty']) || 0,
-              cumCTNQty: Number(row['Cum CTN Qty']) || 0,
+              cumSewOutRejQty: getNum(row, ['Cum Sew Out Rej Qty', 'Cum SewOut Rej Qty']),
+              cumCTNQty: getNum(row, ['Cum CTN Qty', 'CUM CTN QTY', 'Cum Ctn Qty']),
               statusText: statusText,
-              deliveredQty: Number(row['Delivered Qty']) || 0,
-              orderToShippedPct: Number(row['Order to shipped %']) || 0,
+              deliveredQty: deliveredQty,
+              orderToShippedPct: getNum(row, ['Order to shipped %']),
             };
           });
 

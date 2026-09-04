@@ -46,6 +46,14 @@ export function KPIView({ data }: KPIViewProps) {
   const [selectedBuyer, setSelectedBuyer] = useState<string>('All');
   const [vpoSearchQuery, setVpoSearchQuery] = useState('');
   const [selectedVPO, setSelectedVPO] = useState<VPODetail | null>(null);
+  const [fgInModal, setFgInModal] = useState<{
+    isOpen: boolean;
+    buyer: string;
+    title: string;
+    type: 'styles' | 'vpos' | 'schedules';
+    items: string[];
+  }>({ isOpen: false, buyer: '', title: '', type: 'styles', items: [] });
+  const [fgInSearch, setFgInSearch] = useState('');
   
   // Extract unique weeks & buyers
   const availableWeeks = useMemo(() => {
@@ -64,17 +72,6 @@ export function KPIView({ data }: KPIViewProps) {
     return Array.from(buyers).sort((a, b) => a.localeCompare(b));
   }, [data]);
 
-  useEffect(() => {
-    const currentWeekStr = getCurrentISOWeek();
-    if (availableWeeks.length > 0 && selectedWeek === 'All') {
-      if (availableWeeks.includes(currentWeekStr)) {
-        setSelectedWeek(currentWeekStr);
-      } else {
-        setSelectedWeek(availableWeeks[0]);
-      }
-    }
-  }, [availableWeeks, selectedWeek]);
-
   const kpiData = useMemo(() => {
     let filteredData = data;
     if (selectedWeek !== 'All') {
@@ -91,12 +88,15 @@ export function KPIView({ data }: KPIViewProps) {
 
     const buyerMap = new Map<string, { name: string; coQty: number; sewOutQty: number; pendingQty: number }>();
     const vpoMap = new Map<string, { vpo: string; buyer: string; style: string; coQty: number; sewOutQty: number; schedules: Map<string, ScheduleDetail> }>();
+    const fgInMap = new Map<string, { buyer: string; styles: Set<string>; vpos: Set<string>; schedules: Set<string> }>();
 
     filteredData.forEach(item => {
       const co = Number(item.coQty) || 0;
       const sewIn = Number(item.cumSewInQty) || 0;
       const sewOut = Number(item.cumSewOutQty) || 0;
       const rej = Number(item.cumSewOutRejQty) || 0;
+      const cumCTN = Number(item.cumCTNQty) || 0;
+      const deliv = Number(item.deliveredQty) || 0;
       
       totalCOQty += co;
       totalSewIn += sewIn;
@@ -111,6 +111,16 @@ export function KPIView({ data }: KPIViewProps) {
       b.coQty += co;
       b.sewOutQty += sewOut;
       b.pendingQty = Math.max(0, b.coQty - b.sewOutQty);
+
+      if (cumCTN > 0 && deliv === 0) {
+        if (!fgInMap.has(buyer)) {
+          fgInMap.set(buyer, { buyer, styles: new Set(), vpos: new Set(), schedules: new Set() });
+        }
+        const f = fgInMap.get(buyer)!;
+        if (item.styleNo) f.styles.add(item.styleNo);
+        if (item.vpoNo) f.vpos.add(item.vpoNo);
+        if (item.scheduleNo) f.schedules.add(item.scheduleNo);
+      }
 
       if (item.vpoNo) {
         if (!vpoMap.has(item.vpoNo)) {
@@ -179,6 +189,16 @@ export function KPIView({ data }: KPIViewProps) {
       .sort((a, b) => b.pendingQty - a.pendingQty)
       .slice(0, 50); // Top 50 Pending VPOs
 
+    const fgInStats = Array.from(fgInMap.values()).map(f => ({
+      buyer: f.buyer,
+      styleCount: f.styles.size,
+      vpoCount: f.vpos.size,
+      scheduleCount: f.schedules.size,
+      styles: Array.from(f.styles).sort(),
+      vpos: Array.from(f.vpos).sort(),
+      schedules: Array.from(f.schedules).sort()
+    })).sort((a, b) => b.vpoCount - a.vpoCount);
+
     return {
       totalCOQty,
       totalSewIn,
@@ -190,6 +210,7 @@ export function KPIView({ data }: KPIViewProps) {
       topCompletedBuyers,
       topPendingBuyers,
       topPendingVPOs,
+      fgInStats,
       counts: {
         all: { vpo: vpoCountAll, sch: schCountAll },
         sewOut: { vpo: vpoCountSewOut, sch: schCountSewOut },
@@ -362,63 +383,59 @@ export function KPIView({ data }: KPIViewProps) {
         </div>
       </div>
 
-      {/* Charts Section */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        
-        {/* Top Completed Buyers */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
-          <div className="mb-6">
-            <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-               Top Completed Buyers (Sew Out)
-            </h3>
-            <p className="text-xs text-slate-500">Highest volume of successfully sewn out items</p>
-          </div>
-          <div className="h-[320px] w-full flex-grow">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={kpiData.topCompletedBuyers} layout="vertical" margin={{ top: 0, right: 30, left: 40, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
-                <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={(val) => `${val / 1000}k`} />
-                <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 11, fontWeight: 600, fill: '#334155' }} width={90} />
-                <RechartsTooltip 
-                  cursor={{ fill: '#f8fafc' }}
-                  contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                />
-                <Bar dataKey="sewOutQty" name="Completed (Sew Out)" fill="#10b981" radius={[0, 6, 6, 0]} barSize={24}>
-                  {kpiData.topCompletedBuyers.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+      {/* FG IN Section */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
+        <div className="mb-6">
+          <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+            <Package className="w-5 h-5 text-indigo-500" />
+            FG IN
+          </h3>
+          <p className="text-xs text-slate-500 mt-1">Buyer wise Style No, VPO, and Schedule counts (Cum CTN Qty &gt; 0 &amp; Delivered Qty = 0)</p>
         </div>
-
-        {/* Top Pending Buyers */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
-          <div className="mb-6">
-            <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-               Pending vs Completed (Top Pending Buyers)
-            </h3>
-            <p className="text-xs text-slate-500">Proportion of completed and remaining production per buyer</p>
-          </div>
-          <div className="h-[320px] w-full flex-grow">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={kpiData.topPendingBuyers} layout="vertical" margin={{ top: 0, right: 30, left: 40, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
-                <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={(val) => `${val / 1000}k`} />
-                <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 11, fontWeight: 600, fill: '#334155' }} width={90} />
-                <RechartsTooltip 
-                  cursor={{ fill: '#f8fafc' }}
-                  contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                />
-                <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-                <Bar dataKey="sewOutQty" name="Completed (Sew Out)" stackId="a" fill="#10b981" barSize={28} />
-                <Bar dataKey="pendingQty" name="Pending Qty" stackId="a" fill="#f59e0b" radius={[0, 4, 4, 0]} barSize={28} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Buyer</th>
+                <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Style Count</th>
+                <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">VPO Count</th>
+                <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Schedule Count</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {kpiData.fgInStats.map((stat, idx) => (
+                <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="py-3 px-4 text-sm font-medium text-slate-700">{stat.buyer}</td>
+                  <td 
+                    className="py-3 px-4 text-sm font-semibold text-indigo-600 text-right cursor-pointer hover:underline"
+                    onClick={() => setFgInModal({ isOpen: true, buyer: stat.buyer, title: 'Styles', type: 'styles', items: stat.styles })}
+                  >
+                    {stat.styleCount?.toLocaleString() || "0"}
+                  </td>
+                  <td 
+                    className="py-3 px-4 text-sm font-semibold text-emerald-600 text-right cursor-pointer hover:underline"
+                    onClick={() => setFgInModal({ isOpen: true, buyer: stat.buyer, title: 'VPOs', type: 'vpos', items: stat.vpos })}
+                  >
+                    {stat.vpoCount?.toLocaleString() || "0"}
+                  </td>
+                  <td 
+                    className="py-3 px-4 text-sm font-semibold text-amber-600 text-right cursor-pointer hover:underline"
+                    onClick={() => setFgInModal({ isOpen: true, buyer: stat.buyer, title: 'Schedules', type: 'schedules', items: stat.schedules })}
+                  >
+                    {stat.scheduleCount?.toLocaleString() || "0"}
+                  </td>
+                </tr>
+              ))}
+              {kpiData.fgInStats.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-8 text-center text-sm text-slate-500">
+                    No records found matching FG IN criteria.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-
       </div>
 
       {/* Pending VPOs List */}
@@ -562,6 +579,56 @@ export function KPIView({ data }: KPIViewProps) {
                 </div>
               ) : (
                 <p className="text-sm text-slate-500 text-center py-4">No schedule details available for this VPO.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FG IN Details Modal */}
+      {fgInModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">{fgInModal.buyer}</h3>
+                <p className="text-sm text-slate-500">FG IN {fgInModal.title} ({fgInModal.items.length})</p>
+              </div>
+              <button 
+                onClick={() => { setFgInModal(prev => ({ ...prev, isOpen: false })); setFgInSearch(''); }}
+                className="p-2 hover:bg-slate-200 rounded-full text-slate-500 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-4 border-b border-slate-100">
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Search className="h-4 w-4 text-slate-400" />
+                </div>
+                <input
+                  type="text"
+                  placeholder={`Search ${fgInModal.title.toLowerCase()}...`}
+                  value={fgInSearch}
+                  onChange={(e) => setFgInSearch(e.target.value)}
+                  className="block w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors placeholder:text-slate-400"
+                />
+              </div>
+            </div>
+            
+            <div className="p-2 max-h-[400px] overflow-y-auto custom-scrollbar">
+              {fgInModal.items
+                .filter(item => item.toLowerCase().includes(fgInSearch.toLowerCase()))
+                .map((item, idx) => (
+                  <div key={idx} className="px-4 py-2.5 hover:bg-slate-50 rounded-lg text-sm text-slate-700 font-medium border-b border-slate-50 last:border-transparent">
+                    {item}
+                  </div>
+                ))}
+              {fgInModal.items.filter(item => item.toLowerCase().includes(fgInSearch.toLowerCase())).length === 0 && (
+                <div className="px-4 py-8 text-center text-sm text-slate-500">
+                  No {fgInModal.title.toLowerCase()} found matching your search.
+                </div>
               )}
             </div>
           </div>
