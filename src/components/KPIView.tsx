@@ -1,5 +1,6 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { ProductionOrder } from './Dashboard';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
   Cell, Legend, ComposedChart, Line
@@ -55,6 +56,21 @@ export function KPIView({ data }: KPIViewProps) {
     items: string[];
   }>({ isOpen: false, buyer: '', title: '', type: 'styles', items: [] });
   const [fgInSearch, setFgInSearch] = useState('');
+
+  const fgInFilteredItems = useMemo(() => {
+    if (!fgInModal.isOpen) return [];
+    const searchLower = fgInSearch.toLowerCase();
+    return fgInModal.items.filter(item => String(item).toLowerCase().includes(searchLower));
+  }, [fgInModal.isOpen, fgInModal.items, fgInSearch]);
+
+  const fgInListRef = useRef<HTMLDivElement>(null);
+  
+  const fgInVirtualizer = useVirtualizer({
+    count: fgInFilteredItems.length,
+    getScrollElement: () => fgInListRef.current,
+    estimateSize: () => 45,
+    overscan: 10,
+  });
   
   // Extract unique weeks & buyers
   const availableWeeks = useMemo(() => {
@@ -666,15 +682,39 @@ export function KPIView({ data }: KPIViewProps) {
               </div>
             </div>
             
-            <div className="p-2 max-h-[400px] overflow-y-auto custom-scrollbar">
-              {fgInModal.items
-                .filter(item => String(item).toLowerCase().includes(fgInSearch.toLowerCase()))
-                .map((item, idx) => (
-                  <div key={idx} className="px-4 py-2.5 hover:bg-slate-50 rounded-lg text-sm text-slate-700 font-medium border-b border-slate-50 last:border-transparent">
-                    {item}
-                  </div>
-                ))}
-              {fgInModal.items.filter(item => String(item).toLowerCase().includes(fgInSearch.toLowerCase())).length === 0 && (
+            <div 
+              ref={fgInListRef}
+              className="p-2 max-h-[400px] overflow-y-auto custom-scrollbar"
+            >
+              {fgInFilteredItems.length > 0 ? (
+                <div
+                  style={{
+                    height: `${fgInVirtualizer.getTotalSize()}px`,
+                    width: '100%',
+                    position: 'relative',
+                  }}
+                >
+                  {fgInVirtualizer.getVirtualItems().map((virtualItem) => {
+                    const item = fgInFilteredItems[virtualItem.index];
+                    return (
+                      <div
+                        key={virtualItem.key}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          height: `${virtualItem.size}px`,
+                          transform: `translateY(${virtualItem.start}px)`,
+                        }}
+                        className="px-4 flex items-center hover:bg-slate-50 rounded-lg text-sm text-slate-700 font-medium border-b border-slate-50 last:border-transparent transition-colors"
+                      >
+                        {item}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
                 <div className="px-4 py-8 text-center text-sm text-slate-500">
                   No {fgInModal.title.toLowerCase()} found matching your search.
                 </div>
