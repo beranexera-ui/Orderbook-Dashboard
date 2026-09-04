@@ -6,7 +6,7 @@ import { db } from '../firebase';
 import { doc, setDoc, onSnapshot, writeBatch, collection, getDocs } from 'firebase/firestore';
 import { KPIView } from './KPIView';
 
-function MultiSelectDropdown({
+export function MultiSelectDropdown({
   label,
   options,
   selectedValues,

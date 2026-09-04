@@ -1,11 +1,13 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { ProductionOrder } from './Dashboard';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { MultiSelectDropdown } from './Dashboard';
+import * as XLSX from 'xlsx';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
   Cell, Legend, ComposedChart, Line
 } from 'recharts';
-import { Package, Calendar, Briefcase, Activity, CheckCircle, AlertCircle, AlertTriangle, Search, X, ChevronDown, ChevronRight } from 'lucide-react';
+import { Package, Calendar, Briefcase, Activity, CheckCircle, AlertCircle, AlertTriangle, Search, X, ChevronDown, ChevronRight, Download } from 'lucide-react';
 
 interface KPIViewProps {
   data: ProductionOrder[];
@@ -43,8 +45,8 @@ function getCurrentISOWeek() {
 }
 
 export function KPIView({ data }: KPIViewProps) {
-  const [selectedWeek, setSelectedWeek] = useState<string>('All');
-  const [selectedBuyer, setSelectedBuyer] = useState<string>('All');
+  const [selectedWeeks, setSelectedWeeks] = useState<string[]>([]);
+  const [selectedBuyers, setSelectedBuyers] = useState<string[]>([]);
   const [vpoSearchQuery, setVpoSearchQuery] = useState('');
   const [selectedVPO, setSelectedVPO] = useState<VPODetail | null>(null);
   const [expandedBuyer, setExpandedBuyer] = useState<string | null>(null);
@@ -91,11 +93,11 @@ export function KPIView({ data }: KPIViewProps) {
 
   const kpiData = useMemo(() => {
     let filteredData = data;
-    if (selectedWeek !== 'All') {
-      filteredData = filteredData.filter(d => d.weekNo?.toString() === selectedWeek);
+    if (selectedWeeks.length > 0) {
+      filteredData = filteredData.filter(d => d.weekNo && selectedWeeks.includes(d.weekNo.toString()));
     }
-    if (selectedBuyer !== 'All') {
-      filteredData = filteredData.filter(d => d.buyer === selectedBuyer);
+    if (selectedBuyers.length > 0) {
+      filteredData = filteredData.filter(d => d.buyer && selectedBuyers.includes(d.buyer));
     }
     
     let totalCOQty = 0;
@@ -235,7 +237,7 @@ export function KPIView({ data }: KPIViewProps) {
         rejects: { vpo: vpoCountRejects, sch: schCountRejects }
       }
     };
-  }, [data, selectedWeek, selectedBuyer]);
+  }, [data, selectedWeeks, selectedBuyers]);
 
   const filteredTopPendingVPOs = useMemo(() => {
     const query = vpoSearchQuery.toLowerCase().trim();
@@ -286,33 +288,19 @@ export function KPIView({ data }: KPIViewProps) {
           <p className="text-sm text-slate-500 mt-1">Real-time sewing execution and performance tracking</p>
         </div>
         
-        <div className="flex flex-col sm:flex-row items-center gap-3">
-          <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg p-1 w-full sm:w-auto">
-            <Briefcase className="w-4 h-4 text-slate-400 ml-2" />
-            <select 
-              value={selectedBuyer} 
-              onChange={(e) => setSelectedBuyer(e.target.value)}
-              className="bg-transparent border-none text-sm font-semibold focus:outline-none focus:ring-0 text-slate-700 py-1.5 pl-2 pr-8 w-full cursor-pointer"
-            >
-              <option value="All">All Buyers</option>
-              {availableBuyers.map(b => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg p-1 w-full sm:w-auto">
-            <Calendar className="w-4 h-4 text-slate-400 ml-2" />
-            <select 
-              value={selectedWeek} 
-              onChange={(e) => setSelectedWeek(e.target.value)}
-              className="bg-transparent border-none text-sm font-semibold focus:outline-none focus:ring-0 text-slate-700 py-1.5 pl-2 pr-8 w-full cursor-pointer"
-            >
-              <option value="All">All Weeks</option>
-              {availableWeeks.map(w => (
-                <option key={w} value={w}>Week {w}</option>
-              ))}
-            </select>
-          </div>
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 w-full md:w-auto">
+          <MultiSelectDropdown 
+            label="All Buyers"
+            options={availableBuyers}
+            selectedValues={selectedBuyers}
+            onChange={setSelectedBuyers}
+          />
+          <MultiSelectDropdown 
+            label="All Weeks"
+            options={availableWeeks}
+            selectedValues={selectedWeeks}
+            onChange={setSelectedWeeks}
+          />
         </div>
       </div>
 
