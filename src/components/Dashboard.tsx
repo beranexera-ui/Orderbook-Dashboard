@@ -892,8 +892,7 @@ export function Dashboard() {
           </div>
         </header>
 
-        {viewMode === 'table' ? (
-          <>
+        <div style={{ display: viewMode === 'table' ? 'block' : 'none' }} className="space-y-6">
             {/* Summary Metrics */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <MetricCard title="Completed Schedule Line" value={summary.completedScheduleLines?.toLocaleString() || "0"} icon={<CheckCircle className="w-5 h-5 text-emerald-600" />} color="emerald" />
@@ -1087,10 +1086,11 @@ export function Dashboard() {
             </table>
           </div>
         </div>
-          </>
-        ) : (
+        </div>
+
+        <div style={{ display: viewMode === 'kpi' ? 'block' : 'none' }}>
           <KPIView data={data} />
-        )}
+        </div>
 
       </div>
 

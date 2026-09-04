@@ -4,7 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
   Cell, Legend, ComposedChart, Line
 } from 'recharts';
-import { Package, Calendar, Briefcase, Activity, CheckCircle, AlertCircle, AlertTriangle, Search, X } from 'lucide-react';
+import { Package, Calendar, Briefcase, Activity, CheckCircle, AlertCircle, AlertTriangle, Search, X, ChevronDown, ChevronRight } from 'lucide-react';
 
 interface KPIViewProps {
   data: ProductionOrder[];
@@ -46,6 +46,7 @@ export function KPIView({ data }: KPIViewProps) {
   const [selectedBuyer, setSelectedBuyer] = useState<string>('All');
   const [vpoSearchQuery, setVpoSearchQuery] = useState('');
   const [selectedVPO, setSelectedVPO] = useState<VPODetail | null>(null);
+  const [expandedBuyer, setExpandedBuyer] = useState<string | null>(null);
   const [fgInModal, setFgInModal] = useState<{
     isOpen: boolean;
     buyer: string;
@@ -248,6 +249,14 @@ export function KPIView({ data }: KPIViewProps) {
     });
   }, [filteredTopPendingVPOs]);
 
+  useEffect(() => {
+    if (groupedPendingVPOs.length > 0 && (!expandedBuyer || !groupedPendingVPOs.some(g => g[0] === expandedBuyer))) {
+      setExpandedBuyer(groupedPendingVPOs[0][0]);
+    } else if (groupedPendingVPOs.length === 0) {
+      setExpandedBuyer(null);
+    }
+  }, [groupedPendingVPOs]);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       
@@ -434,6 +443,22 @@ export function KPIView({ data }: KPIViewProps) {
                 </tr>
               )}
             </tbody>
+            {kpiData.fgInStats.length > 0 && (
+              <tfoot className="bg-slate-50 font-bold border-t-2 border-slate-200">
+                <tr>
+                  <td className="py-3 px-4 text-sm text-slate-800 uppercase tracking-wider">Total</td>
+                  <td className="py-3 px-4 text-sm text-indigo-700 text-right">
+                    {kpiData.fgInStats.reduce((sum, stat) => sum + stat.styleCount, 0).toLocaleString()}
+                  </td>
+                  <td className="py-3 px-4 text-sm text-emerald-700 text-right">
+                    {kpiData.fgInStats.reduce((sum, stat) => sum + stat.vpoCount, 0).toLocaleString()}
+                  </td>
+                  <td className="py-3 px-4 text-sm text-amber-700 text-right">
+                    {kpiData.fgInStats.reduce((sum, stat) => sum + stat.scheduleCount, 0).toLocaleString()}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>
@@ -461,46 +486,70 @@ export function KPIView({ data }: KPIViewProps) {
           </div>
         </div>
         
-        <div className="space-y-6 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-400">
-          {groupedPendingVPOs.map(([buyer, vpos], groupIdx) => (
-            <div key={groupIdx} className="space-y-3">
-              <h4 className="text-sm font-bold text-slate-700 bg-slate-100 px-3 py-1.5 rounded-lg inline-block">
-                {buyer} <span className="text-slate-500 font-normal text-xs ml-1">({vpos.length} VPOs)</span>
-              </h4>
-              <div className="space-y-3 pl-2 border-l-2 border-slate-100">
-                {vpos.map((vpo, idx) => (
-                  <div 
-                    key={idx} 
-                    onClick={() => setSelectedVPO(vpo)}
-                    className="flex flex-col sm:flex-row sm:items-center gap-4 p-4 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer"
-                  >
-                     <div className="w-full sm:w-1/4">
-                        <p className="text-sm font-bold text-slate-800">{vpo.vpo}</p>
-                        <p className="text-xs text-slate-500">Style: {vpo.style}</p>
-                        {vpo.schedules.length > 0 && (
-                          <p className="text-[10px] text-slate-400 mt-0.5 truncate">Sch: {vpo.schedules.map(s => s.scheduleNo).join(', ')}</p>
-                        )}
-                     </div>
-                     
-                     <div className="w-full sm:w-2/4 flex items-center gap-4">
-                        <div className="flex-grow bg-slate-200 rounded-full h-2.5 overflow-hidden">
-                           <div 
-                             className={`h-2.5 rounded-full ${vpo.progress < 30 ? 'bg-rose-500' : vpo.progress < 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                             style={{ width: `${Math.min(100, vpo.progress)}%` }}
-                           ></div>
-                        </div>
-                        <span className="text-xs font-bold text-slate-700 min-w-[3rem] text-right">{vpo.progress.toFixed(0)}%</span>
-                     </div>
-                     
-                     <div className="w-full sm:w-1/4 text-left sm:text-right flex flex-col sm:items-end">
-                        <p className="text-sm font-bold text-amber-600">{vpo.pendingQty?.toLocaleString() || "0"} Pending</p>
-                        <p className="text-xs text-slate-400">{vpo.sewOutQty?.toLocaleString() || "0"} / {vpo.coQty?.toLocaleString() || "0"} Completed</p>
-                     </div>
+        <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-400">
+          {groupedPendingVPOs.map(([buyer, vpos], groupIdx) => {
+            const isExpanded = expandedBuyer === buyer;
+            return (
+              <div key={groupIdx} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/30">
+                <button
+                  onClick={() => setExpandedBuyer(isExpanded ? null : buyer)}
+                  className="w-full flex items-center justify-between p-4 bg-white hover:bg-slate-50 transition-colors focus:outline-none"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`p-1.5 rounded-lg ${isExpanded ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'} transition-colors`}>
+                      {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </div>
+                    <h4 className="text-sm font-bold text-slate-700">
+                      {buyer}
+                    </h4>
                   </div>
-                ))}
+                  <div className="flex items-center gap-4 text-xs font-semibold">
+                    <span className="text-slate-500 bg-slate-100 px-2 py-1 rounded-md">{vpos.length} VPOs</span>
+                    <span className="text-amber-600 bg-amber-50 px-2 py-1 rounded-md">
+                      {vpos.reduce((sum, v) => sum + v.pendingQty, 0).toLocaleString()} Pending
+                    </span>
+                  </div>
+                </button>
+                
+                {isExpanded && (
+                  <div className="p-4 pt-0 border-t border-slate-100 bg-white">
+                    <div className="space-y-3 mt-4">
+                      {vpos.map((vpo, idx) => (
+                        <div 
+                          key={idx} 
+                          onClick={() => setSelectedVPO(vpo)}
+                          className="flex flex-col sm:flex-row sm:items-center gap-4 p-4 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer"
+                        >
+                           <div className="w-full sm:w-1/4">
+                              <p className="text-sm font-bold text-slate-800">{vpo.vpo}</p>
+                              <p className="text-xs text-slate-500">Style: {vpo.style}</p>
+                              {vpo.schedules.length > 0 && (
+                                <p className="text-[10px] text-slate-400 mt-0.5 truncate">Sch: {vpo.schedules.map(s => s.scheduleNo).join(', ')}</p>
+                              )}
+                           </div>
+                           
+                           <div className="w-full sm:w-2/4 flex items-center gap-4">
+                              <div className="flex-grow bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                                 <div 
+                                   className={`h-2.5 rounded-full ${vpo.progress < 30 ? 'bg-rose-500' : vpo.progress < 70 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                   style={{ width: `${Math.min(100, vpo.progress)}%` }}
+                                 ></div>
+                              </div>
+                              <span className="text-xs font-bold text-slate-700 min-w-[3rem] text-right">{vpo.progress.toFixed(0)}%</span>
+                           </div>
+                           
+                           <div className="w-full sm:w-1/4 text-left sm:text-right flex flex-col sm:items-end">
+                              <p className="text-sm font-bold text-amber-600">{vpo.pendingQty?.toLocaleString() || "0"} Pending</p>
+                              <p className="text-xs text-slate-400">{vpo.sewOutQty?.toLocaleString() || "0"} / {vpo.coQty?.toLocaleString() || "0"} Completed</p>
+                           </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
           {groupedPendingVPOs.length === 0 && (
             <div className="text-center py-8 text-slate-500 text-sm">
               No pending VPOs found matching your search.
