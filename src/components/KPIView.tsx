@@ -619,13 +619,13 @@ export function KPIView({ data }: KPIViewProps) {
             
             <div className="p-2 max-h-[400px] overflow-y-auto custom-scrollbar">
               {fgInModal.items
-                .filter(item => item.toLowerCase().includes(fgInSearch.toLowerCase()))
+                .filter(item => String(item).toLowerCase().includes(fgInSearch.toLowerCase()))
                 .map((item, idx) => (
                   <div key={idx} className="px-4 py-2.5 hover:bg-slate-50 rounded-lg text-sm text-slate-700 font-medium border-b border-slate-50 last:border-transparent">
                     {item}
                   </div>
                 ))}
-              {fgInModal.items.filter(item => item.toLowerCase().includes(fgInSearch.toLowerCase())).length === 0 && (
+              {fgInModal.items.filter(item => String(item).toLowerCase().includes(fgInSearch.toLowerCase())).length === 0 && (
                 <div className="px-4 py-8 text-center text-sm text-slate-500">
                   No {fgInModal.title.toLowerCase()} found matching your search.
                 </div>
