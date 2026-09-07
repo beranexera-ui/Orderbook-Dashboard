@@ -138,6 +138,27 @@ function RemarkInput({
   );
 }
 
+const TABLE_COLUMN_WIDTHS = [
+  '120px', // Plan Del Date
+  '90px',  // WEEK NO
+  '130px', // Buyer
+  '140px', // Style No
+  '130px', // VPO No
+  '120px', // Shipment Mode
+  '105px', // Color Code
+  '160px', // Color Name
+  '115px', // Destination
+  '140px', // Pack Method
+  '120px', // Schedule No
+  '100px', // CO Qty
+  '120px', // Cum Sew In Qty
+  '125px', // Cum SewOut Qty
+  '115px', // Cum CTN Qty
+  '115px', // Status
+  '220px', // Remark
+  '115px', // Delivered Qty
+];
+
 export function Dashboard() {
   const [data, setData] = useState<ProductionOrder[] | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -538,8 +559,8 @@ export function Dashboard() {
   const rowVirtualizer = useVirtualizer({
     count: filteredItems.length,
     getScrollElement: () => tableContainerRef.current,
-    estimateSize: () => 45,
-    overscan: 10,
+    estimateSize: () => 44,
+    overscan: 15,
   });
 
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -990,33 +1011,38 @@ export function Dashboard() {
         {/* Detailed Data Table */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div ref={tableContainerRef} className="overflow-auto max-h-[70vh]">
-            <table className="w-full text-sm text-left border-collapse relative">
+            <table className="w-full min-w-[2180px] table-fixed text-sm text-left border-collapse relative">
+              <colgroup>
+                {TABLE_COLUMN_WIDTHS.map((width, idx) => (
+                  <col key={idx} style={{ width }} />
+                ))}
+              </colgroup>
               <thead className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold bg-slate-50/90 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-20 shadow-sm">
-                <tr>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Plan Del Date</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center">WEEK NO</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Buyer</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Style No</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">VPO No</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Shipment Mode</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Color Code</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Color Name</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Destination</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Pack Method</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Schedule No</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right">CO Qty</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum Sew In Qty</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum SewOut Qty</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50">Cum CTN Qty</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center">Status</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap">Remark</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right">Delivered Qty</th>
+                <tr className="h-[44px]">
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Plan Del Date</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">WEEK NO</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Buyer</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Style No</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">VPO No</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Shipment Mode</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Color Code</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Color Name</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Destination</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Pack Method</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Schedule No</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right truncate">CO Qty</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum Sew In Qty</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum SewOut Qty</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum CTN Qty</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">Status</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Remark</th>
+                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right truncate">Delivered Qty</th>
                 </tr>
               </thead>
               <tbody>
                 {paddingTop > 0 && (
-                  <tr>
-                    <td colSpan={18} style={{ height: `${paddingTop}px` }}></td>
+                  <tr className="border-0 p-0 m-0">
+                    <td colSpan={18} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                   </tr>
                 )}
                 {virtualRows.length > 0 ? (
@@ -1024,62 +1050,61 @@ export function Dashboard() {
                     const row = filteredItems[virtualRow.index];
                     const isNewVpo = virtualRow.index > 0 && filteredItems[virtualRow.index - 1].vpoNo !== row.vpoNo;
                     return (
-                      <React.Fragment key={row.id}>
-                        {isNewVpo && (
-                          <tr className="bg-slate-800">
-                            <td colSpan={18} className="h-[4px] p-0 border-0"></td>
-                          </tr>
+                      <tr 
+                        key={row.id}
+                        className={cn(
+                          "h-[44px] hover:bg-indigo-50/50 transition-colors bg-white",
+                          isNewVpo ? "border-t-[3px] border-t-slate-800" : "border-t border-slate-200"
                         )}
-                        <tr className="hover:bg-indigo-50/50 transition-colors bg-white">
-                          <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.planDelDate}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap text-center font-medium bg-slate-50/50">{row.weekNo}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.buyer}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 font-medium text-slate-900 whitespace-nowrap">{row.styleNo}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.vpoNo}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.shipmentMode}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.colorCode}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap truncate max-w-[150px]" title={row.colorName}>{row.colorName}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.destination}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap truncate max-w-[150px]" title={row.packMethod}>{row.packMethod}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-slate-700 whitespace-nowrap">{row.scheduleNo}</td>
-                      
-                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.coQty?.toLocaleString() || "0"}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-right text-slate-600 whitespace-nowrap bg-slate-50/50">{row.cumSewInQty?.toLocaleString() || "0"}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-indigo-700 whitespace-nowrap bg-slate-50/50">{row.cumSewOutQty?.toLocaleString() || "0"}</td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-right text-slate-700 whitespace-nowrap bg-slate-50/50">{row.cumCTNQty?.toLocaleString() || "0"}</td>
-                      
-                      <td className="px-3 py-2.5 border border-slate-200 text-center whitespace-nowrap">
-                        <span className={cn(
-                          "inline-flex items-center px-2 py-0.5 rounded-full font-medium text-[11px] uppercase tracking-wider",
-                          row.statusText === 'Shipped' ? "bg-blue-100 text-blue-700" :
-                          row.statusText === 'Completed' ? "bg-emerald-100 text-emerald-700" : 
-                          "bg-amber-100 text-amber-800"
-                        )}>
-                          {row.statusText}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5 border border-slate-200 whitespace-nowrap min-w-[200px]">
-                        <RemarkInput 
-                          initialValue={remarks[row.id] || ''}
-                          rowId={row.id}
-                          onSave={handleRemarkChange}
-                        />
-                      </td>
-                      <td className="px-3 py-2.5 border border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap">{row.deliveredQty?.toLocaleString() || "0"}</td>
+                      >
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate">{row.planDelDate}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap text-center font-medium bg-slate-50/50 truncate">{row.weekNo}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.buyer}>{row.buyer}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 font-medium text-slate-900 whitespace-nowrap truncate" title={row.styleNo}>{row.styleNo}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.vpoNo}>{row.vpoNo}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate">{row.shipmentMode}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.colorCode}>{row.colorCode}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.colorName}>{row.colorName}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.destination}>{row.destination}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.packMethod}>{row.packMethod}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.scheduleNo}>{row.scheduleNo}</td>
+                        
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap truncate">{row.coQty?.toLocaleString() || "0"}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-right text-slate-600 whitespace-nowrap bg-slate-50/50 truncate">{row.cumSewInQty?.toLocaleString() || "0"}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-right font-medium text-indigo-700 whitespace-nowrap bg-slate-50/50 truncate">{row.cumSewOutQty?.toLocaleString() || "0"}</td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-right text-slate-700 whitespace-nowrap bg-slate-50/50 truncate">{row.cumCTNQty?.toLocaleString() || "0"}</td>
+                        
+                        <td className="px-3 py-2 border-r border-b border-slate-200 text-center whitespace-nowrap truncate">
+                          <span className={cn(
+                            "inline-flex items-center px-2 py-0.5 rounded-full font-medium text-[11px] uppercase tracking-wider",
+                            row.statusText === 'Shipped' ? "bg-blue-100 text-blue-700" :
+                            row.statusText === 'Completed' ? "bg-emerald-100 text-emerald-700" : 
+                            "bg-amber-100 text-amber-800"
+                          )}>
+                            {row.statusText}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
+                          <RemarkInput 
+                            initialValue={remarks[row.id] || ''}
+                            rowId={row.id}
+                            onSave={handleRemarkChange}
+                          />
+                        </td>
+                        <td className="px-3 py-2 border-b border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap truncate">{row.deliveredQty?.toLocaleString() || "0"}</td>
                       </tr>
-                      </React.Fragment>
                     );
                   })
                 ) : (
                   <tr>
-                    <td colSpan={21} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
+                    <td colSpan={18} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
                       No orders found matching the current filters.
                     </td>
                   </tr>
                 )}
                 {paddingBottom > 0 && (
-                  <tr>
-                    <td colSpan={21} style={{ height: `${paddingBottom}px` }}></td>
+                  <tr className="border-0 p-0 m-0">
+                    <td colSpan={18} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                   </tr>
                 )}
               </tbody>

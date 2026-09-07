@@ -106,7 +106,7 @@ export function KPIView({ data }: KPIViewProps) {
     let totalRejects = 0;
 
     const buyerMap = new Map<string, { name: string; coQty: number; sewOutQty: number; pendingQty: number }>();
-    const vpoMap = new Map<string, { vpo: string; buyer: string; style: string; coQty: number; sewOutQty: number; schedules: Map<string, ScheduleDetail> }>();
+    const vpoMap = new Map<string, { vpo: string; buyer: string; style: string; coQty: number; sewOutQty: number; rejects: number; schedules: Map<string, ScheduleDetail> }>();
     const fgInMap = new Map<string, { buyer: string; styles: Set<string>; vpos: Set<string>; schedules: Set<string> }>();
 
     filteredData.forEach(item => {
