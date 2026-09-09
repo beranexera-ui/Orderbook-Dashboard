@@ -787,13 +787,13 @@ export function Dashboard() {
       'Destination': item.destination,
       'Pack Method': item.packMethod,
       'Schedule No': item.scheduleNo,
-      'CO Qty': item.coQty,
-      'Cum Sew In Qty': item.cumSewInQty,
-      'Cum SewOut Qty': item.cumSewOutQty,
-      'Cum CTN Qty': item.cumCTNQty,
+      'CO Qty': Number(item.coQty) || 0,
+      'Cum Sew In Qty': Number(item.cumSewInQty) || 0,
+      'Cum SewOut Qty': Number(item.cumSewOutQty) || 0,
+      'Cum CTN Qty': Number(item.cumCTNQty) || 0,
       'Status': item.statusText,
       'Remark': remarks[item.id] || '',
-      'Delivered Qty': item.deliveredQty
+      'Delivered Qty': Number(item.deliveredQty) || 0
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
