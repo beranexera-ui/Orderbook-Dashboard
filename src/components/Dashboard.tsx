@@ -133,6 +133,7 @@ function RemarkInput({
         }
       }}
       placeholder="Add remark..."
+      list="remark-suggestions"
       className="w-full text-sm bg-transparent border-0 border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:ring-0 px-1 py-1 transition-colors"
     />
   );
@@ -568,6 +569,14 @@ export function Dashboard() {
   const paddingTop = virtualRows.length > 0 ? virtualRows[0]?.start || 0 : 0;
   const paddingBottom = virtualRows.length > 0 ? totalSize - (virtualRows[virtualRows.length - 1]?.end || 0) : 0;
 
+  const uniqueRemarksList = useMemo(() => {
+    const suggestions = new Set(['DONE', 'PRINTING']);
+    Object.values(remarks).forEach(r => {
+      if (r && r.trim()) suggestions.add(r.trim().toUpperCase());
+    });
+    return Array.from(suggestions).sort();
+  }, [remarks]);
+
   // Helper to get unique options based on current filters (excluding the filter itself)
   const getUniqueOptions = useCallback((field: keyof ProductionOrder | 'remark') => {
     if (!data) return [];
@@ -857,6 +866,12 @@ export function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-4 md:p-8">
+      <datalist id="remark-suggestions">
+        {uniqueRemarksList.map((remark, idx) => (
+          <option key={idx} value={remark} />
+        ))}
+      </datalist>
+
       <div className="mx-auto space-y-6" style={{ maxWidth: '1600px' }}>
         
         <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
