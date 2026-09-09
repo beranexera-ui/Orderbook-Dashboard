@@ -772,6 +772,45 @@ export function Dashboard() {
     }, 250);
   };
 
+  const handleExportExcel = useCallback(() => {
+    if (filteredItems.length === 0) return;
+
+    const exportData = filteredItems.map(item => ({
+      'Plan Del Date': item.planDelDate,
+      'WEEK NO': item.weekNo,
+      'Buyer': item.buyer,
+      'Style No': item.styleNo,
+      'VPO No': item.vpoNo,
+      'Shipment Mode': item.shipmentMode,
+      'Color Code': item.colorCode,
+      'Color Name': item.colorName,
+      'Destination': item.destination,
+      'Pack Method': item.packMethod,
+      'Schedule No': item.scheduleNo,
+      'CO Qty': item.coQty,
+      'Cum Sew In Qty': item.cumSewInQty,
+      'Cum SewOut Qty': item.cumSewOutQty,
+      'Cum CTN Qty': item.cumCTNQty,
+      'Status': item.statusText,
+      'Remark': remarks[item.id] || '',
+      'Delivered Qty': item.deliveredQty
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Production Data");
+    
+    const colWidths = [
+      { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
+      { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 15 }, { wch: 15 }, 
+      { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
+      { wch: 15 }, { wch: 30 }, { wch: 15 }
+    ];
+    worksheet['!cols'] = colWidths;
+
+    XLSX.writeFile(workbook, `Production_Data_${new Date().toISOString().split('T')[0]}.xlsx`);
+  }, [filteredItems, remarks]);
+
   if (loadingInitial) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -1011,6 +1050,14 @@ export function Dashboard() {
               className="w-full sm:w-auto px-5 py-2 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
             >
               Clear Filters
+            </button>
+            <button
+              onClick={handleExportExcel}
+              disabled={filteredItems.length === 0}
+              className="w-full sm:w-auto px-5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-100"
+            >
+              <FileSpreadsheet className="w-4 h-4 mr-2" />
+              Export
             </button>
             <button
               onClick={() => setShowPrintModal(true)}
