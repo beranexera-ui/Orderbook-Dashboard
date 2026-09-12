@@ -104,10 +104,12 @@ export interface ProductionOrder {
 
 function RemarkInput({
   initialValue,
+  updatedAt,
   rowId,
   onSave
 }: {
   initialValue: string;
+  updatedAt: number | null;
   rowId: string;
   onSave: (id: string, text: string) => void;
 }) {
@@ -116,6 +118,43 @@ function RemarkInput({
   useEffect(() => {
     setValue(initialValue);
   }, [initialValue]);
+
+  const getTooltipInfo = () => {
+    if (!updatedAt) return undefined;
+    const date = new Date(updatedAt);
+    
+    const formattedDate = date.toLocaleString('en-US', { 
+       year: 'numeric', month: '2-digit', day: '2-digit', 
+       hour: '2-digit', minute: '2-digit', hour12: true 
+    });
+
+    const day = date.getDay(); // 0 is Sunday
+    const hour = date.getHours(); 
+    
+    // ISO week number calculation to alternate shifts
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+
+    // Swap shifts every week (Current week is odd (37), where Morning is A and Evening is B)
+    const morningShift = weekNo % 2 !== 0 ? 'A' : 'B';
+    const eveningShift = weekNo % 2 !== 0 ? 'B' : 'A';
+    
+    let currentShift = "Off-hours";
+    if (day !== 0) { // Not Sunday
+       if (hour >= 6 && hour < 14) { 
+           currentShift = `Shift ${morningShift}`;
+       } else if (hour >= 14 && hour < 22) { 
+           currentShift = `Shift ${eveningShift}`;
+       }
+    } else {
+       currentShift = "Holiday (Sunday)";
+    }
+
+    return `Updated: ${formattedDate} | ${currentShift}`;
+  };
 
   return (
     <input 
@@ -132,6 +171,7 @@ function RemarkInput({
           e.currentTarget.blur();
         }
       }}
+      title={getTooltipInfo()}
       placeholder="Add remark..."
       list="remark-suggestions"
       className="w-full text-sm bg-transparent border-0 border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:ring-0 px-1 py-1 transition-colors"
@@ -166,7 +206,7 @@ export function Dashboard() {
   const [loadingState, setLoadingState] = useState<'idle' | 'reading' | 'parsing' | 'uploading'>('idle');
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [loadingInitial, setLoadingInitial] = useState(true);
-  const [remarks, setRemarks] = useState<Record<string, string>>({});
+  const [remarks, setRemarks] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -186,9 +226,12 @@ export function Dashboard() {
 
   useEffect(() => {
     const unsubRemarks = onSnapshot(collection(db, "remarks"), (snapshot) => {
-      const newRemarks: Record<string, string> = {};
+      const newRemarks: Record<string, { text: string, updatedAt: number | null }> = {};
       snapshot.forEach(doc => {
-        newRemarks[doc.id] = doc.data().text || '';
+        newRemarks[doc.id] = {
+          text: doc.data().text || '',
+          updatedAt: doc.data().updatedAt || null
+        };
       });
       setRemarks(newRemarks);
     }, (error) => {
@@ -529,7 +572,7 @@ export function Dashboard() {
     if (!data) return [];
     
     return data.filter(item => {
-      const itemRemarkText = (remarks[item.id] || '').trim();
+      const itemRemarkText = (remarks[item.id]?.text || '').trim();
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
@@ -572,7 +615,7 @@ export function Dashboard() {
   const uniqueRemarksList = useMemo(() => {
     const suggestions = new Set(['DONE', 'PRINTING']);
     Object.values(remarks).forEach(r => {
-      if (r && r.trim()) suggestions.add(r.trim().toUpperCase());
+      if (r?.text && r.text.trim()) suggestions.add(r.text.trim().toUpperCase());
     });
     return Array.from(suggestions).sort();
   }, [remarks]);
@@ -583,7 +626,7 @@ export function Dashboard() {
     const options = new Set<string>();
     
     data.forEach(item => {
-      const itemRemarkText = (remarks[item.id] || '').trim();
+      const itemRemarkText = (remarks[item.id]?.text || '').trim();
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
@@ -792,7 +835,7 @@ export function Dashboard() {
       'Cum SewOut Qty': Number(item.cumSewOutQty) || 0,
       'Cum CTN Qty': Number(item.cumCTNQty) || 0,
       'Status': item.statusText,
-      'Remark': remarks[item.id] || '',
+      'Remark': remarks[item.id]?.text || '',
       'Delivered Qty': Number(item.deliveredQty) || 0
     }));
 
@@ -1148,7 +1191,8 @@ export function Dashboard() {
                         </td>
                         <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
                           <RemarkInput 
-                            initialValue={remarks[row.id] || ''}
+                            initialValue={remarks[row.id]?.text || ''}
+                            updatedAt={remarks[row.id]?.updatedAt || null}
                             rowId={row.id}
                             onSave={handleRemarkChange}
                           />
