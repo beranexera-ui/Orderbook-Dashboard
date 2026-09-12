@@ -114,7 +114,8 @@ function RemarkInput({
   onSave: (id: string, text: string) => void;
 }) {
   const [value, setValue] = useState(initialValue);
-  const [isLocked, setIsLocked] = useState(true);
+  // Auto-lock ONLY if there is an existing remark. If empty, keep it unlocked.
+  const [isLocked, setIsLocked] = useState(initialValue.trim() !== "");
   const [showPrompt, setShowPrompt] = useState(false);
   const [passcode, setPasscode] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
@@ -122,10 +123,13 @@ function RemarkInput({
 
   useEffect(() => {
     setValue(initialValue);
+    // If the value gets cleared (or loaded as empty), unlock it. 
+    // If it gets loaded with a value, lock it.
+    setIsLocked(initialValue.trim() !== "");
   }, [initialValue]);
 
   const getTooltipInfo = () => {
-    if (!updatedAt) return undefined;
+    if (!updatedAt || !initialValue.trim()) return undefined;
     const date = new Date(updatedAt);
     
     const formattedDate = date.toLocaleString('en-US', { 
@@ -197,7 +201,10 @@ function RemarkInput({
             if (value !== initialValue) {
               onSave(rowId, value);
             }
-            setIsLocked(true);
+            // Auto-lock again ONLY if the input is not empty after saving
+            if (value.trim() !== "") {
+              setIsLocked(true);
+            }
           }
         }}
         onKeyDown={(e) => {
@@ -206,7 +213,7 @@ function RemarkInput({
           }
         }}
         title={getTooltipInfo()}
-        placeholder={isLocked ? (initialValue ? "" : "Double-click to add remark...") : "Add remark..."}
+        placeholder={isLocked ? "" : "Add remark..."}
         list="remark-suggestions"
         className={`w-full text-sm bg-transparent border-0 border-b px-1 py-1 transition-colors ${
           isLocked 
