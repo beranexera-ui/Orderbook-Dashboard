@@ -114,6 +114,11 @@ function RemarkInput({
   onSave: (id: string, text: string) => void;
 }) {
   const [value, setValue] = useState(initialValue);
+  const [isLocked, setIsLocked] = useState(true);
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [passcode, setPasscode] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setValue(initialValue);
@@ -156,26 +161,99 @@ function RemarkInput({
     return `Updated: ${formattedDate} | ${currentShift}`;
   };
 
+  const handleDoubleClick = () => {
+    if (isLocked) {
+      setShowPrompt(true);
+      setPasscode("");
+      setErrorMsg("");
+    }
+  };
+
+  const handleUnlock = () => {
+    if (passcode === '1125') {
+      setIsLocked(false);
+      setShowPrompt(false);
+      setTimeout(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+        }
+      }, 50);
+    } else {
+      setErrorMsg("Incorrect passcode!");
+    }
+  };
+
   return (
-    <input 
-      type="text" 
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={() => {
-        if (value !== initialValue) {
-          onSave(rowId, value);
-        }
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.currentTarget.blur();
-        }
-      }}
-      title={getTooltipInfo()}
-      placeholder="Add remark..."
-      list="remark-suggestions"
-      className="w-full text-sm bg-transparent border-0 border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:ring-0 px-1 py-1 transition-colors"
-    />
+    <>
+      <input 
+        ref={inputRef}
+        type="text" 
+        value={value}
+        readOnly={isLocked}
+        onDoubleClick={handleDoubleClick}
+        onChange={(e) => !isLocked && setValue(e.target.value)}
+        onBlur={() => {
+          if (!isLocked) {
+            if (value !== initialValue) {
+              onSave(rowId, value);
+            }
+            setIsLocked(true);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.currentTarget.blur();
+          }
+        }}
+        title={getTooltipInfo()}
+        placeholder={isLocked ? (initialValue ? "" : "Double-click to add remark...") : "Add remark..."}
+        list="remark-suggestions"
+        className={`w-full text-sm bg-transparent border-0 border-b px-1 py-1 transition-colors ${
+          isLocked 
+            ? 'border-transparent cursor-pointer hover:bg-slate-100/50 focus:ring-0 focus:outline-none' 
+            : 'border-slate-300 hover:border-slate-300 focus:border-indigo-500 focus:ring-0'
+        }`}
+      />
+      
+      {showPrompt && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white p-5 rounded-xl shadow-xl w-full max-w-xs border border-slate-200">
+            <h3 className="text-base font-bold text-slate-900 mb-1">Unlock Remark</h3>
+            <p className="text-xs text-slate-500 mb-4">Enter passcode to edit this remark.</p>
+            <input 
+              type="password" 
+              autoFocus
+              value={passcode}
+              onChange={(e) => {
+                setPasscode(e.target.value);
+                setErrorMsg("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleUnlock();
+                if (e.key === 'Escape') setShowPrompt(false);
+              }}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm mb-2"
+              placeholder="Enter passcode..."
+            />
+            {errorMsg && <p className="text-xs text-red-500 mb-2">{errorMsg}</p>}
+            <div className="flex justify-end gap-2 mt-4">
+              <button 
+                onClick={() => setShowPrompt(false)}
+                className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleUnlock}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
+              >
+                Unlock
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
