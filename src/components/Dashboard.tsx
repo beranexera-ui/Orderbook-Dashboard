@@ -77,6 +77,7 @@ export function MultiSelectDropdown({
 
 export interface ProductionOrder {
   id: string;
+  legacyId?: string;
   buyer: string;
   groupTechClass: string;
   buyerDivisionName: string;
@@ -560,14 +561,16 @@ export function Dashboard() {
             const colorStr = String(getVal(row, ['Color Code', 'color code']) || '').trim();
             const destStr = String(getVal(row, ['Destination', 'destination']) || '').trim();
             
-            // Create a safe, stable ID for Firestore
-            const stableId = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}_${planDelDate}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+            // Create a safe, stable ID for Firestore (excluding mutable dates)
+            const legacyIdStr = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}_${planDelDate}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+            const stableId = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}`.replace(/[^a-zA-Z0-9_-]/g, '-');
             
             // Fallback to index if fields are empty to prevent overwriting
             const finalId = (stableId === '_____' || !stableId) ? `row_${index}` : stableId;
 
             return {
               id: finalId,
+              legacyId: legacyIdStr,
               buyer: getVal(row, ['Buyer']) || '',
               groupTechClass: getVal(row, ['Group Tech Class']) || '',
               buyerDivisionName: getVal(row, ['Buyer Division Name']) || '',
@@ -657,7 +660,7 @@ export function Dashboard() {
     if (!data) return [];
     
     return data.filter(item => {
-      const itemRemarkText = (remarks[item.id]?.text || '').trim();
+      const itemRemarkText = (remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '').trim();
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
@@ -711,7 +714,7 @@ export function Dashboard() {
     const options = new Set<string>();
     
     data.forEach(item => {
-      const itemRemarkText = (remarks[item.id]?.text || '').trim();
+      const itemRemarkText = (remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '').trim();
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
@@ -920,7 +923,7 @@ export function Dashboard() {
       'Cum SewOut Qty': Number(item.cumSewOutQty) || 0,
       'Cum CTN Qty': Number(item.cumCTNQty) || 0,
       'Status': item.statusText,
-      'Remark': remarks[item.id]?.text || '',
+      'Remark': remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '',
       'Delivered Qty': Number(item.deliveredQty) || 0
     }));
 
@@ -1276,8 +1279,8 @@ export function Dashboard() {
                         </td>
                         <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
                           <RemarkInput 
-                            initialValue={remarks[row.id]?.text || ''}
-                            updatedAt={remarks[row.id]?.updatedAt || null}
+                            initialValue={remarks[row.id]?.text || remarks[row.legacyId || '']?.text || ''}
+                            updatedAt={remarks[row.id]?.updatedAt || remarks[row.legacyId || '']?.updatedAt || null}
                             rowId={row.id}
                             onSave={handleRemarkChange}
                           />
