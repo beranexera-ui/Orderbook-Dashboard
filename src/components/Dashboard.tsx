@@ -1,10 +1,11 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer, BarChart2, Table } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer, BarChart2, Table, Percent } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { db } from '../firebase';
 import { doc, setDoc, onSnapshot, writeBatch, collection, getDocs } from 'firebase/firestore';
 import { KPIView } from './KPIView';
+import { SewOutReportModal } from './SewOutReportModal';
 
 export function MultiSelectDropdown({
   label,
@@ -702,7 +703,7 @@ export function Dashboard() {
 
   const uniqueRemarksList = useMemo(() => {
     const suggestions = new Set(['DONE', 'PRINTING']);
-    Object.values(remarks).forEach(r => {
+    Object.values(remarks).forEach((r: { text: string; updatedAt: number | null }) => {
       if (r?.text && r.text.trim()) suggestions.add(r.text.trim().toUpperCase());
     });
     return Array.from(suggestions).sort();
@@ -799,109 +800,8 @@ export function Dashboard() {
     return { completedScheduleLines, pendingScheduleLines, completedVPOs, pendingVPOs };
   }, [filteredItems]);
 
-  const [showPrintModal, setShowPrintModal] = useState(false);
-
-  const executePrint = (orientation: 'portrait' | 'landscape') => {
-    setShowPrintModal(false);
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'absolute';
-    iframe.style.width = '0px';
-    iframe.style.height = '0px';
-    iframe.style.border = 'none';
-    document.body.appendChild(iframe);
-
-    const doc = iframe.contentWindow?.document;
-    if (!doc) return;
-
-    let tableRowsHTML = '';
-    let prevVPO: string | null = null;
-    
-    filteredItems.forEach((item, index) => {
-      if (index > 0 && item.vpoNo !== prevVPO) {
-        tableRowsHTML += `<tr style="background-color: #1e293b; height: 4px;"><td colspan="13" style="padding: 0; border: none;"></td></tr>`;
-      }
-      prevVPO = item.vpoNo;
-      tableRowsHTML += `
-        <tr>
-          <td>${item.planDelDate || ''}</td>
-          <td>${item.weekNo || ''}</td>
-          <td>${item.buyer || ''}</td>
-          <td>${item.styleNo || ''}</td>
-          <td>${item.vpoNo || ''}</td>
-          <td>${item.shipmentMode || ''}</td>
-          <td>${item.colorCode || ''}</td>
-          <td>${item.colorName || ''}</td>
-          <td>${item.destination || ''}</td>
-          <td>${item.packMethod || ''}</td>
-          <td>${item.scheduleNo || ''}</td>
-          <td>${item.coQty != null ? item.coQty?.toLocaleString() || "0" : ''}</td>
-          <td>${item.statusText || ''}</td>
-        </tr>
-      `;
-    });
-
-    doc.open();
-    doc.write(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Production Data Report</title>
-        <style>
-          @page { size: A4 ${orientation}; margin: 10mm; }
-          body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-            font-size: 8pt; 
-            color: #000; 
-            background: #fff;
-          }
-          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-          th, td { border: 1px solid #ccc; padding: 4px; text-align: left; word-wrap: break-word; }
-          th { background-color: #f1f5f9; font-weight: bold; }
-          h2 { font-size: 14pt; margin: 0 0 10px 0; }
-          .header { margin-bottom: 15px; }
-          .print-time { font-size: 8pt; color: #555; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h2>Production Orders Report</h2>
-          <div class="print-time">Printed on: ${new Date()?.toLocaleString() || "0"} &bull; Total Records: ${filteredItems.length}</div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Plan Del Date</th>
-              <th>WEEK NO</th>
-              <th>Buyer</th>
-              <th>Style No</th>
-              <th>VPO No</th>
-              <th>Shipment Mode</th>
-              <th>Color Code</th>
-              <th>Color Name</th>
-              <th>Destination</th>
-              <th>Pack Method</th>
-              <th>Schedule No</th>
-              <th>CO Qty</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tableRowsHTML}
-          </tbody>
-        </table>
-      </body>
-      </html>
-    `);
-    doc.close();
-
-    setTimeout(() => {
-      iframe.contentWindow?.focus();
-      iframe.contentWindow?.print();
-      setTimeout(() => {
-        document.body.removeChild(iframe);
-      }, 1000);
-    }, 250);
-  };
+  const [showSewOutReport, setShowSewOutReport] = useState(false);
+  const [reportInitialMode, setReportInitialMode] = useState<'sewout_50_100' | 'all'>('sewout_50_100');
 
   const handleExportExcel = useCallback(() => {
     if (filteredItems.length === 0) return;
@@ -1191,12 +1091,28 @@ export function Dashboard() {
               Export
             </button>
             <button
-              onClick={() => setShowPrintModal(true)}
+              onClick={() => {
+                setReportInitialMode('all');
+                setShowSewOutReport(true);
+              }}
               disabled={filteredItems.length === 0}
               className="w-full sm:w-auto px-5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-indigo-100"
+              title="Print Production Orders (Buyer & VPO Wise)"
             >
               <Printer className="w-4 h-4 mr-2" />
               Print
+            </button>
+            <button
+              onClick={() => {
+                setReportInitialMode('sewout_50_100');
+                setShowSewOutReport(true);
+              }}
+              disabled={!data || data.length === 0}
+              className="w-full sm:w-auto px-4 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-purple-200"
+              title="View and Print 50% - 100% Sewing Out Progress Report (Buyer Wise)"
+            >
+              <Percent className="w-4 h-4 mr-1.5 text-purple-600" />
+              50%-100% SewOut (Buyer Wise)
             </button>
           </div>
         </div>
@@ -1313,35 +1229,16 @@ export function Dashboard() {
 
       </div>
 
-      {/* Print Modal */}
-      {showPrintModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm border border-slate-200">
-            <h3 className="text-lg font-bold text-slate-900 mb-2">Print Options</h3>
-            <p className="text-sm text-slate-500 mb-6">Choose how you want to print the report.</p>
-            <div className="flex flex-col gap-3">
-              <button 
-                onClick={() => executePrint('portrait')} 
-                className="w-full px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-medium transition-colors text-sm flex items-center justify-center"
-              >
-                Portrait
-              </button>
-              <button 
-                onClick={() => executePrint('landscape')} 
-                className="w-full px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl font-medium transition-colors text-sm flex items-center justify-center"
-              >
-                Landscape
-              </button>
-              <button 
-                onClick={() => setShowPrintModal(false)} 
-                className="w-full px-4 py-3 mt-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-medium transition-colors text-sm flex items-center justify-center"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Production Report & Print Modal (Buyer & VPO Wise) */}
+      <SewOutReportModal
+        isOpen={showSewOutReport}
+        onClose={() => setShowSewOutReport(false)}
+        data={data || []}
+        remarks={remarks}
+        initialFilterMode={reportInitialMode}
+        initialWeeks={filterWeekNo}
+        initialBuyers={filterBuyer}
+      />
     </div>
   );
 }
