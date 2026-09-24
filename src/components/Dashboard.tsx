@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer, BarChart2, Table, Percent } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer, BarChart2, Table } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { db } from '../firebase';
@@ -801,7 +801,7 @@ export function Dashboard() {
   }, [filteredItems]);
 
   const [showSewOutReport, setShowSewOutReport] = useState(false);
-  const [reportInitialMode, setReportInitialMode] = useState<'sewout_50_100' | 'all'>('sewout_50_100');
+  const [reportInitialMode, setReportInitialMode] = useState<'sewout_50_100' | 'all'>('all');
 
   const handleExportExcel = useCallback(() => {
     if (filteredItems.length === 0) return;
@@ -1101,18 +1101,6 @@ export function Dashboard() {
             >
               <Printer className="w-4 h-4 mr-2" />
               Print
-            </button>
-            <button
-              onClick={() => {
-                setReportInitialMode('sewout_50_100');
-                setShowSewOutReport(true);
-              }}
-              disabled={!data || data.length === 0}
-              className="w-full sm:w-auto px-4 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-purple-200"
-              title="View and Print 50% - 100% Sewing Out Progress Report (Buyer Wise)"
-            >
-              <Percent className="w-4 h-4 mr-1.5 text-purple-600" />
-              50%-100% SewOut (Buyer Wise)
             </button>
           </div>
         </div>
