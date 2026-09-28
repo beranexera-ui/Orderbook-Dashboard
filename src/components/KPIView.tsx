@@ -50,6 +50,14 @@ export function KPIView({ data }: KPIViewProps) {
   const [vpoSearchQuery, setVpoSearchQuery] = useState('');
   const [selectedVPO, setSelectedVPO] = useState<VPODetail | null>(null);
   const [expandedBuyer, setExpandedBuyer] = useState<string | null>(null);
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const [fgInModal, setFgInModal] = useState<{
     isOpen: boolean;
     buyer: string;
@@ -305,134 +313,142 @@ export function KPIView({ data }: KPIViewProps) {
       </div>
 
       {/* KPI Top Level Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         
         {/* Order Qty */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 w-16 h-16 bg-blue-50 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
+        <div className="bg-white rounded-2xl p-4 md:p-5 border border-slate-200 shadow-sm relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 w-12 md:w-16 h-12 md:h-16 bg-blue-50 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total CO Qty</p>
-              <Package className="w-4 h-4 text-blue-500" />
+            <div className="flex items-center justify-between mb-1.5 md:mb-2">
+              <p className="text-[10px] md:text-xs font-bold text-slate-500 uppercase tracking-wider">Total CO Qty</p>
+              <Package className="w-3.5 h-3.5 md:w-4 md:h-4 text-blue-500" />
             </div>
-            <p className="text-3xl font-black text-slate-900">{kpiData.totalCOQty?.toLocaleString() || "0"}</p>
-            <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
-              <span>VPOs: <span className="text-slate-700">{kpiData.counts.all.vpo}</span></span>
-              <span className="w-[1px] h-3 bg-slate-200"></span>
-              <span>Schedules: <span className="text-slate-700">{kpiData.counts.all.sch}</span></span>
-            </div>
+            <p className="text-xl md:text-3xl font-black text-slate-900">{kpiData.totalCOQty?.toLocaleString() || "0"}</p>
+            {!isMobile && (
+              <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
+                <span>VPOs: <span className="text-slate-700">{kpiData.counts.all.vpo}</span></span>
+                <span className="w-[1px] h-3 bg-slate-200"></span>
+                <span>Schedules: <span className="text-slate-700">{kpiData.counts.all.sch}</span></span>
+              </div>
+            )}
           </div>
         </div>
         
         {/* Completed (Sew Out) Qty */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 w-16 h-16 bg-emerald-50 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
+        <div className="bg-white rounded-2xl p-4 md:p-5 border border-slate-200 shadow-sm relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 w-12 md:w-16 h-12 md:h-16 bg-emerald-50 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Completed (Sew Out)</p>
-              <CheckCircle className="w-4 h-4 text-emerald-500" />
+            <div className="flex items-center justify-between mb-1.5 md:mb-2">
+              <p className="text-[10px] md:text-xs font-bold text-slate-500 uppercase tracking-wider">Sew Out</p>
+              <CheckCircle className="w-3.5 h-3.5 md:w-4 md:h-4 text-emerald-500" />
             </div>
-            <p className="text-3xl font-black text-slate-900">{kpiData.totalSewOut?.toLocaleString() || "0"}</p>
-            <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
-              <span>VPOs: <span className="text-slate-700">{kpiData.counts.sewOut.vpo}</span></span>
-              <span className="w-[1px] h-3 bg-slate-200"></span>
-              <span>Schedules: <span className="text-slate-700">{kpiData.counts.sewOut.sch}</span></span>
-            </div>
+            <p className="text-xl md:text-3xl font-black text-slate-900">{kpiData.totalSewOut?.toLocaleString() || "0"}</p>
+            {!isMobile && (
+              <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
+                <span>VPOs: <span className="text-slate-700">{kpiData.counts.sewOut.vpo}</span></span>
+                <span className="w-[1px] h-3 bg-slate-200"></span>
+                <span>Schedules: <span className="text-slate-700">{kpiData.counts.sewOut.sch}</span></span>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Pending Qty */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 w-16 h-16 bg-amber-50 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
+        <div className="bg-white rounded-2xl p-4 md:p-5 border border-slate-200 shadow-sm relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 w-12 md:w-16 h-12 md:h-16 bg-amber-50 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Pending Production</p>
-              <AlertCircle className="w-4 h-4 text-amber-500" />
+            <div className="flex items-center justify-between mb-1.5 md:mb-2">
+              <p className="text-[10px] md:text-xs font-bold text-slate-500 uppercase tracking-wider">Pending</p>
+              <AlertCircle className="w-3.5 h-3.5 md:w-4 md:h-4 text-amber-500" />
             </div>
-            <p className="text-3xl font-black text-slate-900">{kpiData.totalPending?.toLocaleString() || "0"}</p>
-            <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
-              <span>VPOs: <span className="text-slate-700">{kpiData.counts.pending.vpo}</span></span>
-              <span className="w-[1px] h-3 bg-slate-200"></span>
-              <span>Schedules: <span className="text-slate-700">{kpiData.counts.pending.sch}</span></span>
-            </div>
+            <p className="text-xl md:text-3xl font-black text-slate-900">{kpiData.totalPending?.toLocaleString() || "0"}</p>
+            {!isMobile && (
+              <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
+                <span>VPOs: <span className="text-slate-700">{kpiData.counts.pending.vpo}</span></span>
+                <span className="w-[1px] h-3 bg-slate-200"></span>
+                <span>Schedules: <span className="text-slate-700">{kpiData.counts.pending.sch}</span></span>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Rejection */}
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm relative overflow-hidden group">
-          <div className="absolute -right-4 -top-4 w-16 h-16 bg-rose-50 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
+        <div className="bg-white rounded-2xl p-4 md:p-5 border border-slate-200 shadow-sm relative overflow-hidden group">
+          <div className="absolute -right-4 -top-4 w-12 md:w-16 h-12 md:h-16 bg-rose-50 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
           <div className="relative z-10">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Sew Out Rejects</p>
-              <AlertTriangle className="w-4 h-4 text-rose-500" />
+            <div className="flex items-center justify-between mb-1.5 md:mb-2">
+              <p className="text-[10px] md:text-xs font-bold text-slate-500 uppercase tracking-wider">Rejects</p>
+              <AlertTriangle className="w-3.5 h-3.5 md:w-4 md:h-4 text-rose-500" />
             </div>
-            <p className="text-3xl font-black text-slate-900">{kpiData.totalRejects?.toLocaleString() || "0"} <span className="text-sm font-semibold text-rose-500 ml-1">({kpiData.rejectionRate.toFixed(1)}%)</span></p>
-            <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
-              <span>VPOs: <span className="text-slate-700">{kpiData.counts.rejects.vpo}</span></span>
-              <span className="w-[1px] h-3 bg-slate-200"></span>
-              <span>Schedules: <span className="text-slate-700">{kpiData.counts.rejects.sch}</span></span>
-            </div>
+            <p className="text-xl md:text-3xl font-black text-slate-900">{kpiData.totalRejects?.toLocaleString() || "0"}</p>
+            {!isMobile && (
+              <div className="mt-2.5 text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex items-center justify-between">
+                <span>VPOs: <span className="text-slate-700">{kpiData.counts.rejects.vpo}</span></span>
+                <span className="w-[1px] h-3 bg-slate-200"></span>
+                <span>Schedules: <span className="text-slate-700">{kpiData.counts.rejects.sch}</span></span>
+              </div>
+            )}
           </div>
         </div>
 
       </div>
 
       {/* Production Progress Bar */}
-      <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-2xl p-6 shadow-md">
-        <div className="flex justify-between items-end mb-3">
+      <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-2xl p-4 md:p-6 shadow-md">
+        <div className="flex flex-col sm:flex-row justify-between sm:items-end mb-3 gap-2">
           <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Overall Sewing Completion Progress</p>
-            <h3 className="text-2xl font-black text-white">{kpiData.overallProgress.toFixed(1)}% <span className="text-sm font-medium text-slate-400 ml-2 font-normal">Completed</span></h3>
+            <p className="text-[10px] md:text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Overall Sewing Completion</p>
+            <h3 className="text-xl md:text-2xl font-black text-white">{kpiData.overallProgress.toFixed(1)}% <span className="text-xs md:text-sm font-medium text-slate-400 ml-2 font-normal">Completed</span></h3>
           </div>
-          <div className="text-right">
-            <p className="text-sm text-slate-300"><span className="font-bold text-white">{kpiData.totalSewIn?.toLocaleString() || "0"}</span> Items currently Sewn In</p>
+          <div className="text-left sm:text-right">
+            <p className="text-xs md:text-sm text-slate-300"><span className="font-bold text-white">{kpiData.totalSewIn?.toLocaleString() || "0"}</span> Items Sewn In</p>
           </div>
         </div>
-        <div className="w-full bg-slate-700 rounded-full h-3 overflow-hidden">
+        <div className="w-full bg-slate-700 rounded-full h-2.5 md:h-3 overflow-hidden">
           <div 
-            className="bg-emerald-500 h-3 rounded-full transition-all duration-1000" 
+            className="bg-emerald-500 h-2.5 md:h-3 rounded-full transition-all duration-1000" 
             style={{ width: `${Math.min(100, kpiData.overallProgress)}%` }}
           ></div>
         </div>
       </div>
 
       {/* FG IN Section */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
-        <div className="mb-6">
-          <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-            <Package className="w-5 h-5 text-indigo-500" />
+      <div className="bg-white p-4 md:p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col">
+        <div className="mb-4 md:mb-6">
+          <h3 className="text-sm md:text-base font-bold text-slate-800 flex items-center gap-2">
+            <Package className="w-4 h-4 md:w-5 md:h-5 text-indigo-500" />
             FG IN
           </h3>
-          <p className="text-xs text-slate-500 mt-1">Buyer wise Style No, VPO, and Schedule counts (Cum CTN Qty &gt; 0 &amp; Delivered Qty = 0)</p>
+          <p className="text-[10px] md:text-xs text-slate-500 mt-1">Buyer wise Style, VPO, and Schedule counts (CTN &gt; 0 &amp; Delivered = 0)</p>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+        <div className="overflow-x-auto -mx-4 md:mx-0">
+          <table className="w-full text-left border-collapse min-w-[400px]">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
-                <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Buyer</th>
-                <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Style Count</th>
-                <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">VPO Count</th>
-                <th className="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">Schedule Count</th>
+                <th className="py-2.5 px-4 text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Buyer</th>
+                <th className="py-2.5 px-4 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">Styles</th>
+                <th className="py-2.5 px-4 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">VPOs</th>
+                <th className="py-2.5 px-4 text-[10px] font-semibold text-slate-500 uppercase tracking-wider text-right">Schedules</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {kpiData.fgInStats.map((stat, idx) => (
                 <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="py-3 px-4 text-sm font-medium text-slate-700">{stat.buyer}</td>
+                  <td className="py-2.5 px-4 text-xs font-medium text-slate-700 truncate max-w-[120px]">{stat.buyer}</td>
                   <td 
-                    className="py-3 px-4 text-sm font-semibold text-indigo-600 text-right cursor-pointer hover:underline"
+                    className="py-2.5 px-4 text-xs font-semibold text-indigo-600 text-right cursor-pointer hover:underline"
                     onClick={() => setFgInModal({ isOpen: true, buyer: stat.buyer, title: 'Styles', type: 'styles', items: stat.styles })}
                   >
                     {stat.styleCount?.toLocaleString() || "0"}
                   </td>
                   <td 
-                    className="py-3 px-4 text-sm font-semibold text-emerald-600 text-right cursor-pointer hover:underline"
+                    className="py-2.5 px-4 text-xs font-semibold text-emerald-600 text-right cursor-pointer hover:underline"
                     onClick={() => setFgInModal({ isOpen: true, buyer: stat.buyer, title: 'VPOs', type: 'vpos', items: stat.vpos })}
                   >
                     {stat.vpoCount?.toLocaleString() || "0"}
                   </td>
                   <td 
-                    className="py-3 px-4 text-sm font-semibold text-amber-600 text-right cursor-pointer hover:underline"
+                    className="py-2.5 px-4 text-xs font-semibold text-amber-600 text-right cursor-pointer hover:underline"
                     onClick={() => setFgInModal({ isOpen: true, buyer: stat.buyer, title: 'Schedules', type: 'schedules', items: stat.schedules })}
                   >
                     {stat.scheduleCount?.toLocaleString() || "0"}
@@ -441,7 +457,7 @@ export function KPIView({ data }: KPIViewProps) {
               ))}
               {kpiData.fgInStats.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="py-8 text-center text-sm text-slate-500">
+                  <td colSpan={4} className="py-8 text-center text-xs text-slate-500">
                     No records found matching FG IN criteria.
                   </td>
                 </tr>
@@ -450,14 +466,14 @@ export function KPIView({ data }: KPIViewProps) {
             {kpiData.fgInStats.length > 0 && (
               <tfoot className="bg-slate-50 font-bold border-t-2 border-slate-200">
                 <tr>
-                  <td className="py-3 px-4 text-sm text-slate-800 uppercase tracking-wider">Total</td>
-                  <td className="py-3 px-4 text-sm text-indigo-700 text-right">
+                  <td className="py-2.5 px-4 text-xs text-slate-800 uppercase tracking-wider">Total</td>
+                  <td className="py-2.5 px-4 text-xs text-indigo-700 text-right">
                     {kpiData.fgInStats.reduce((sum, stat) => sum + stat.styleCount, 0).toLocaleString()}
                   </td>
-                  <td className="py-3 px-4 text-sm text-emerald-700 text-right">
+                  <td className="py-2.5 px-4 text-xs text-emerald-700 text-right">
                     {kpiData.fgInStats.reduce((sum, stat) => sum + stat.vpoCount, 0).toLocaleString()}
                   </td>
-                  <td className="py-3 px-4 text-sm text-amber-700 text-right">
+                  <td className="py-2.5 px-4 text-xs text-amber-700 text-right">
                     {kpiData.fgInStats.reduce((sum, stat) => sum + stat.scheduleCount, 0).toLocaleString()}
                   </td>
                 </tr>
@@ -468,13 +484,13 @@ export function KPIView({ data }: KPIViewProps) {
       </div>
 
       {/* Pending VPOs List */}
-      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+      <div className="bg-white p-4 md:p-6 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 md:mb-6">
           <div>
-            <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-               <AlertCircle className="w-5 h-5 text-amber-500" /> Action Required: Critical Pending VPOs ({filteredTopPendingVPOs.length})
+            <h3 className="text-sm md:text-base font-bold text-slate-800 flex items-center gap-2">
+               <AlertCircle className="w-4 h-4 md:w-5 md:h-5 text-amber-500" /> Pending VPOs ({filteredTopPendingVPOs.length})
             </h3>
-            <p className="text-xs text-slate-500 mt-1">Individual VPOs with the highest remaining production volume</p>
+            <p className="text-[10px] md:text-xs text-slate-500 mt-1">Individual VPOs with highest remaining production</p>
           </div>
           <div className="relative w-full md:w-64">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -482,7 +498,7 @@ export function KPIView({ data }: KPIViewProps) {
             </div>
             <input
               type="text"
-              placeholder="Search VPO or Schedule..."
+              placeholder="Search VPO..."
               value={vpoSearchQuery}
               onChange={(e) => setVpoSearchQuery(e.target.value)}
               className="block w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-colors placeholder:text-slate-400"
@@ -490,7 +506,7 @@ export function KPIView({ data }: KPIViewProps) {
           </div>
         </div>
         
-        <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-slate-100 [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-slate-400">
+        <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1 md:pr-2 custom-scrollbar">
           {groupedPendingVPOs.map(([buyer, vpos], groupIdx) => {
             const isExpanded = expandedBuyer === buyer;
             return (

@@ -62,6 +62,14 @@ export function SewOutReportModal({
   initialWeeks,
   initialBuyers
 }: SewOutReportModalProps) {
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // Preset Mode: 'all' (0-100%) or 'sewout_50_100' (50-100%)
   const [reportMode, setReportMode] = useState<'sewout_50_100' | 'all' | 'custom'>(
     initialFilterMode === 'sewout_50_100' ? 'sewout_50_100' : 'all'
@@ -1079,19 +1087,21 @@ export function SewOutReportModal({
       <div className="bg-white w-full max-w-7xl max-h-[96vh] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         
         {/* Modal Header */}
-        <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+        <div className="px-4 py-3 sm:px-6 sm:py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
           <div>
             <div className="flex items-center gap-2.5">
-              <span className="p-1.5 bg-indigo-500/20 text-indigo-400 rounded-lg border border-indigo-500/30">
-                <Printer className="w-5 h-5" />
+              <span className="p-1 sm:p-1.5 bg-indigo-500/20 text-indigo-400 rounded-lg border border-indigo-500/30">
+                <Printer className="w-4 h-4 sm:w-5 sm:h-5" />
               </span>
-              <h2 className="text-lg font-bold tracking-tight text-white">
-                Production Report & Print Center (Buyer & VPO Wise)
+              <h2 className="text-sm sm:text-lg font-bold tracking-tight text-white">
+                Production Report & Print Center
               </h2>
             </div>
-            <p className="text-xs text-slate-400 mt-1">
-              Select buyers with checkboxes. Orders are separated by <strong>VPO No</strong> under each Buyer.
-            </p>
+            {!isMobile && (
+              <p className="text-xs text-slate-400 mt-1">
+                Select buyers with checkboxes. Orders are separated by <strong>VPO No</strong> under each Buyer.
+              </p>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -1102,43 +1112,43 @@ export function SewOutReportModal({
         </div>
 
         {/* Top Control Bar: Mode Toggle, Buyer Filter Button, View Switcher & Print Actions */}
-        <div className="p-3.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 text-sm">
+        <div className="p-2 sm:p-3.5 bg-slate-50 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-sm">
           
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
             {/* Mode Selector */}
-            <div className="flex bg-slate-200/80 p-0.5 rounded-lg text-xs font-semibold">
+            <div className="flex bg-slate-200/80 p-0.5 rounded-lg text-[10px] sm:text-xs font-semibold w-full sm:w-auto">
               <button
                 type="button"
                 onClick={() => handleModeChange('sewout_50_100')}
-                className={`px-3 py-1.5 rounded-md transition-all ${
+                className={`flex-1 sm:flex-none px-2 sm:px-3 py-1.5 rounded-md transition-all ${
                   reportMode === 'sewout_50_100'
                     ? 'bg-white text-indigo-900 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                50% – 100% SewOut
+                50%–100%
               </button>
               <button
                 type="button"
                 onClick={() => handleModeChange('all')}
-                className={`px-3 py-1.5 rounded-md transition-all ${
+                className={`flex-1 sm:flex-none px-2 sm:px-3 py-1.5 rounded-md transition-all ${
                   reportMode === 'all'
                     ? 'bg-white text-indigo-900 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                All Orders (0-100%)
+                All (0–100%)
               </button>
               <button
                 type="button"
                 onClick={() => handleModeChange('custom')}
-                className={`px-3 py-1.5 rounded-md transition-all ${
+                className={`flex-1 sm:flex-none px-2 sm:px-3 py-1.5 rounded-md transition-all ${
                   reportMode === 'custom'
                     ? 'bg-white text-indigo-900 shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Custom Range
+                Custom
               </button>
             </div>
 

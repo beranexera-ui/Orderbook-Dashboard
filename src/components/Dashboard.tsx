@@ -50,10 +50,10 @@ export function MultiSelectDropdown({
     <div className="relative flex-1 sm:min-w-[140px]" ref={containerRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between py-2 pl-3 pr-3 bg-slate-50 hover:bg-slate-100/50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-700 text-left min-w-[140px] transition-all"
+        className="w-full flex items-center justify-between py-1.5 md:py-2 pl-2 md:pl-3 pr-2 md:pr-3 bg-slate-50 hover:bg-slate-100/50 border border-slate-200 rounded-lg text-[10px] md:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-700 text-left min-w-0 sm:min-w-[140px] transition-all"
       >
-        <span className="truncate pr-2 font-medium">{displayText}</span>
-        <svg className={`w-4 h-4 text-slate-400 transition-transform flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+        <span className="truncate pr-1 md:pr-2 font-medium">{displayText}</span>
+        <svg className={`w-3 h-3 md:w-4 md:h-4 text-slate-400 transition-transform flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
       </button>
       
       {isOpen && (
@@ -311,6 +311,13 @@ export function Dashboard() {
   const [filterRemark, setFilterRemark] = useState<string[]>([]);
   
   const tableContainerRef = useRef<HTMLDivElement>(null);
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     const unsubRemarks = onSnapshot(collection(db, "remarks"), (snapshot) => {
@@ -693,8 +700,8 @@ export function Dashboard() {
   const rowVirtualizer = useVirtualizer({
     count: filteredItems.length,
     getScrollElement: () => tableContainerRef.current,
-    estimateSize: () => 44,
-    overscan: 15,
+    estimateSize: () => isMobile ? 180 : 44,
+    overscan: isMobile ? 5 : 15,
   });
 
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -946,29 +953,30 @@ export function Dashboard() {
 
       <div className="mx-auto space-y-6" style={{ maxWidth: '1600px' }}>
         
-        <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 bg-white p-4 md:p-6 rounded-xl border border-slate-200 shadow-sm">
           <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">Production Overview</h1>
-              <span className="bg-indigo-50 text-indigo-700 text-[9px] font-bold px-2 py-0.5 rounded border border-indigo-100 uppercase tracking-widest">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900">Production Overview</h1>
+              <span className="bg-indigo-50 text-indigo-700 text-[8px] md:text-[9px] font-bold px-2 py-0.5 rounded border border-indigo-100 uppercase tracking-widest">
                 Powered by DILEEPA WICKRAMASINGHE
               </span>
             </div>
-            <p className="text-slate-500 mt-1.5 text-sm flex items-center gap-2">
+            <p className="text-slate-500 mt-1 text-xs md:text-sm flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
               <span>Item-level fulfillment details for the next 6 weeks.</span>
               {lastUpdated && (
-                <>
-                  <span className="text-slate-300">•</span>
-                  <span className="text-slate-600 font-medium flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</span>
-                </>
+                <span className="text-slate-600 font-medium flex items-center gap-1.5 truncate">
+                  <span className="hidden sm:inline text-slate-300">•</span>
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" /> 
+                  OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+                </span>
               )}
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
+          <div className="flex flex-wrap items-center gap-2 md:gap-3">
+            <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 w-full sm:w-auto">
               <button
                 onClick={() => setViewMode('table')}
-                className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                className={`flex-1 sm:flex-none flex items-center justify-center px-3 py-1.5 rounded-md text-xs md:text-sm font-medium transition-all ${
                   viewMode === 'table' 
                     ? 'bg-white text-slate-800 shadow-sm border border-slate-200/50' 
                     : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
@@ -979,7 +987,7 @@ export function Dashboard() {
               </button>
               <button
                 onClick={() => setViewMode('kpi')}
-                className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                className={`flex-1 sm:flex-none flex items-center justify-center px-3 py-1.5 rounded-md text-xs md:text-sm font-medium transition-all ${
                   viewMode === 'kpi' 
                     ? 'bg-white text-slate-800 shadow-sm border border-slate-200/50' 
                     : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
@@ -989,35 +997,37 @@ export function Dashboard() {
                 KPI Dashboard
               </button>
             </div>
-            <button
-              onClick={() => {
-                setReportInitialMode('all');
-                setShowSewOutReport(true);
-              }}
-              className="inline-flex items-center px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-sm font-medium shadow-sm transition-all active:scale-95"
-              title="SewOut Report (Buyer & VPO Wise Analysis)"
-            >
-              <Printer className="w-4 h-4 mr-1.5" />
-              SewOut Analysis
-            </button>
-            <button 
-              onClick={() => setData(null)}
-              disabled={loadingState !== 'idle'}
-              className="inline-flex items-center px-4 py-2.5 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 shadow-sm transition-all focus:ring-2 focus:ring-slate-900/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
-            >
-              {loadingState !== 'idle' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2" />}
-              {loadingState !== 'idle' ? "Processing..." : "Upload New File"}
-            </button>
+            <div className="flex gap-2 w-full sm:w-auto">
+              <button
+                onClick={() => {
+                  setReportInitialMode('all');
+                  setShowSewOutReport(true);
+                }}
+                className="flex-1 sm:flex-none inline-flex items-center justify-center px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-xs md:text-sm font-medium shadow-sm transition-all active:scale-95"
+                title="SewOut Report (Buyer & VPO Wise Analysis)"
+              >
+                <Printer className="w-4 h-4 mr-1.5" />
+                Analysis
+              </button>
+              <button 
+                onClick={() => setData(null)}
+                disabled={loadingState !== 'idle'}
+                className="flex-1 sm:flex-none inline-flex items-center justify-center px-4 py-2.5 bg-slate-900 text-white rounded-lg text-xs md:text-sm font-medium hover:bg-slate-800 shadow-sm transition-all focus:ring-2 focus:ring-slate-900/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+              >
+                {loadingState !== 'idle' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2" />}
+                {loadingState !== 'idle' ? "..." : "Upload"}
+              </button>
+            </div>
           </div>
         </header>
 
-        <div style={{ display: viewMode === 'table' ? 'block' : 'none' }} className="space-y-6">
+        <div style={{ display: viewMode === 'table' ? 'block' : 'none' }} className="space-y-4 md:space-y-6">
             {/* Summary Metrics */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <MetricCard title="Completed Schedule Line" value={summary.completedScheduleLines?.toLocaleString() || "0"} icon={<CheckCircle className="w-5 h-5 text-emerald-600" />} color="emerald" />
-              <MetricCard title="Pending Schedule Line" value={summary.pendingScheduleLines?.toLocaleString() || "0"} icon={<AlertTriangle className="w-5 h-5 text-amber-600" />} color="amber" />
-              <MetricCard title="Completed VPO" value={summary.completedVPOs?.toLocaleString() || "0"} icon={<CheckCircle className="w-5 h-5 text-blue-600" />} color="blue" />
-              <MetricCard title="Pending VPO" value={summary.pendingVPOs?.toLocaleString() || "0"} icon={<AlertTriangle className="w-5 h-5 text-rose-600" />} color="rose" />
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+              <MetricCard title="Comp. Sch. Line" value={summary.completedScheduleLines?.toLocaleString() || "0"} icon={<CheckCircle className="w-5 h-5 text-emerald-600" />} color="emerald" />
+              <MetricCard title="Pend. Sch. Line" value={summary.pendingScheduleLines?.toLocaleString() || "0"} icon={<AlertTriangle className="w-5 h-5 text-amber-600" />} color="amber" />
+              <MetricCard title="Comp. VPO" value={summary.completedVPOs?.toLocaleString() || "0"} icon={<CheckCircle className="w-5 h-5 text-blue-600" />} color="blue" />
+              <MetricCard title="Pend. VPO" value={summary.pendingVPOs?.toLocaleString() || "0"} icon={<AlertTriangle className="w-5 h-5 text-rose-600" />} color="rose" />
             </div>
 
             {/* Filters and Search Bar */}
@@ -1027,196 +1037,276 @@ export function Dashboard() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input 
                 type="text" 
-                placeholder="Search anything (style, color, vpo)..." 
+                placeholder="Search style, color, vpo..." 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-9 pr-4 py-2 bg-slate-50 hover:bg-slate-100/50 focus:bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
               />
             </div>
             
-            <div className="flex flex-wrap sm:flex-nowrap gap-3 w-full">
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 md:gap-3 w-full">
               <MultiSelectDropdown 
-                label="All Buyers"
+                label="Buyers"
                 options={uniqueBuyers}
                 selectedValues={filterBuyer}
                 onChange={setFilterBuyer}
               />
               
               <MultiSelectDropdown 
-                label="All Weeks"
+                label="Weeks"
                 options={uniqueWeeks.map(w => String(w))}
                 selectedValues={filterWeekNo}
                 onChange={setFilterWeekNo}
               />
 
               <MultiSelectDropdown 
-                label="All Statuses"
+                label="Statuses"
                 options={['Shipped', 'Completed', 'Pending']}
                 selectedValues={filterStatus}
                 onChange={setFilterStatus}
               />
+
+              <MultiSelectDropdown 
+                label="Ship. Modes"
+                options={uniqueShipmentModes}
+                selectedValues={filterShipmentMode}
+                onChange={setFilterShipmentMode}
+              />
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-4 items-center">
-            <MultiSelectDropdown 
-              label="All Shipment Modes"
-              options={uniqueShipmentModes}
-              selectedValues={filterShipmentMode}
-              onChange={setFilterShipmentMode}
-            />
-            
-            <MultiSelectDropdown 
-              label="All Destinations"
-              options={uniqueDestinations}
-              selectedValues={filterDestination}
-              onChange={setFilterDestination}
-            />
+          <div className="flex flex-col sm:flex-row flex-wrap gap-2 md:gap-4 items-center">
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 md:gap-3 w-full sm:w-auto flex-1">
+              <MultiSelectDropdown 
+                label="Destinations"
+                options={uniqueDestinations}
+                selectedValues={filterDestination}
+                onChange={setFilterDestination}
+              />
 
-            <MultiSelectDropdown 
-              label="All Pack Methods"
-              options={uniquePackMethods}
-              selectedValues={filterPackMethod}
-              onChange={setFilterPackMethod}
-            />
+              <MultiSelectDropdown 
+                label="Pack Methods"
+                options={uniquePackMethods}
+                selectedValues={filterPackMethod}
+                onChange={setFilterPackMethod}
+              />
+              
+              <MultiSelectDropdown 
+                label="Remarks"
+                options={uniqueRemarks}
+                selectedValues={filterRemark}
+                onChange={setFilterRemark}
+              />
+            </div>
             
-            <MultiSelectDropdown 
-              label="All Remarks"
-              options={uniqueRemarks}
-              selectedValues={filterRemark}
-              onChange={setFilterRemark}
-            />
-            
-            <button 
-              onClick={() => {
-                setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]); setFilterRemark([]);
-              }}
-              className="w-full sm:w-auto px-5 py-2 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
-            >
-              Clear Filters
-            </button>
-            <button
-              onClick={handleExportExcel}
-              disabled={filteredItems.length === 0}
-              className="w-full sm:w-auto px-5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-100"
-            >
-              <FileSpreadsheet className="w-4 h-4 mr-2" />
-              Export
-            </button>
-            <button
-              onClick={() => setShowPrintModal(true)}
-              disabled={filteredItems.length === 0}
-              className="w-full sm:w-auto px-5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-indigo-100"
-              title="Print Filtered Orders (Portrait or Landscape A4 B&W)"
-            >
-              <Printer className="w-4 h-4 mr-2" />
-              Print
-            </button>
+            <div className="grid grid-cols-3 sm:flex gap-2 w-full sm:w-auto">
+              <button 
+                onClick={() => {
+                  setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]); setFilterRemark([]);
+                }}
+                className="px-2 py-2 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-medium transition-colors whitespace-nowrap"
+              >
+                Clear
+              </button>
+              <button
+                onClick={handleExportExcel}
+                disabled={filteredItems.length === 0}
+                className="px-2 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-emerald-100"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 mr-1" />
+                Excel
+              </button>
+              <button
+                onClick={() => setShowPrintModal(true)}
+                disabled={filteredItems.length === 0}
+                className="px-2 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-indigo-100"
+                title="Print Filtered Orders (Portrait or Landscape A4 B&W)"
+              >
+                <Printer className="w-3.5 h-3.5 mr-1" />
+                Print
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Detailed Data Table */}
+        {/* Detailed Data View (Table on Desktop, Cards on Mobile) */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-          <div ref={tableContainerRef} className="overflow-auto max-h-[70vh]">
-            <table className="w-full min-w-[2180px] table-fixed text-sm text-left border-collapse relative">
-              <colgroup>
-                {TABLE_COLUMN_WIDTHS.map((width, idx) => (
-                  <col key={idx} style={{ width }} />
-                ))}
-              </colgroup>
-              <thead className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold bg-slate-50/90 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-20 shadow-sm">
-                <tr className="h-[44px]">
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Plan Del Date</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">WEEK NO</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Buyer</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Style No</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">VPO No</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Shipment Mode</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Color Code</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Color Name</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Destination</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Pack Method</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Schedule No</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right truncate">CO Qty</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum Sew In Qty</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum SewOut Qty</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum CTN Qty</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">Status</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Remark</th>
-                  <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right truncate">Delivered Qty</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paddingTop > 0 && (
-                  <tr className="border-0 p-0 m-0">
-                    <td colSpan={18} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+          <div ref={tableContainerRef} className="overflow-auto max-h-[75vh]">
+            {!isMobile ? (
+              <table className="w-full min-w-[2180px] table-fixed text-sm text-left border-collapse relative">
+                <colgroup>
+                  {TABLE_COLUMN_WIDTHS.map((width, idx) => (
+                    <col key={idx} style={{ width }} />
+                  ))}
+                </colgroup>
+                <thead className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold bg-slate-50/90 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+                  <tr className="h-[44px]">
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Plan Del Date</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">WEEK NO</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Buyer</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Style No</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">VPO No</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Shipment Mode</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Color Code</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Color Name</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Destination</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Pack Method</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Schedule No</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right truncate">CO Qty</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum Sew In Qty</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum SewOut Qty</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum CTN Qty</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">Status</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Remark</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right truncate">Delivered Qty</th>
                   </tr>
-                )}
-                {virtualRows.length > 0 ? (
-                  virtualRows.map((virtualRow) => {
-                    const row = filteredItems[virtualRow.index];
-                    const isNewVpo = virtualRow.index > 0 && filteredItems[virtualRow.index - 1].vpoNo !== row.vpoNo;
-                    return (
-                      <tr 
-                        key={row.id}
-                        className={cn(
-                          "h-[44px] hover:bg-indigo-50/50 transition-colors bg-white",
-                          isNewVpo ? "border-t-[3px] border-t-slate-800" : "border-t border-slate-200"
-                        )}
-                      >
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate">{row.planDelDate}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap text-center font-medium bg-slate-50/50 truncate">{row.weekNo}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.buyer}>{row.buyer}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 font-medium text-slate-900 whitespace-nowrap truncate" title={row.styleNo}>{row.styleNo}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.vpoNo}>{row.vpoNo}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate">{row.shipmentMode}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.colorCode}>{row.colorCode}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.colorName}>{row.colorName}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.destination}>{row.destination}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.packMethod}>{row.packMethod}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.scheduleNo}>{row.scheduleNo}</td>
-                        
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap truncate">{row.coQty?.toLocaleString() || "0"}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-right text-slate-600 whitespace-nowrap bg-slate-50/50 truncate">{row.cumSewInQty?.toLocaleString() || "0"}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-right font-medium text-indigo-700 whitespace-nowrap bg-slate-50/50 truncate">{row.cumSewOutQty?.toLocaleString() || "0"}</td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-right text-slate-700 whitespace-nowrap bg-slate-50/50 truncate">{row.cumCTNQty?.toLocaleString() || "0"}</td>
-                        
-                        <td className="px-3 py-2 border-r border-b border-slate-200 text-center whitespace-nowrap truncate">
+                </thead>
+                <tbody>
+                  {paddingTop > 0 && (
+                    <tr className="border-0 p-0 m-0">
+                      <td colSpan={18} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                    </tr>
+                  )}
+                  {virtualRows.length > 0 ? (
+                    virtualRows.map((virtualRow) => {
+                      const row = filteredItems[virtualRow.index];
+                      const isNewVpo = virtualRow.index > 0 && filteredItems[virtualRow.index - 1].vpoNo !== row.vpoNo;
+                      return (
+                        <tr 
+                          key={row.id}
+                          className={cn(
+                            "h-[44px] hover:bg-indigo-50/50 transition-colors bg-white",
+                            isNewVpo ? "border-t-[3px] border-t-slate-800" : "border-t border-slate-200"
+                          )}
+                        >
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate">{row.planDelDate}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap text-center font-medium bg-slate-50/50 truncate">{row.weekNo}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.buyer}>{row.buyer}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 font-medium text-slate-900 whitespace-nowrap truncate" title={row.styleNo}>{row.styleNo}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.vpoNo}>{row.vpoNo}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate">{row.shipmentMode}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.colorCode}>{row.colorCode}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.colorName}>{row.colorName}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.destination}>{row.destination}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.packMethod}>{row.packMethod}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.scheduleNo}>{row.scheduleNo}</td>
+                          
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap truncate">{row.coQty?.toLocaleString() || "0"}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-right text-slate-600 whitespace-nowrap bg-slate-50/50 truncate">{row.cumSewInQty?.toLocaleString() || "0"}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-right font-medium text-indigo-700 whitespace-nowrap bg-slate-50/50 truncate">{row.cumSewOutQty?.toLocaleString() || "0"}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-right text-slate-700 whitespace-nowrap bg-slate-50/50 truncate">{row.cumCTNQty?.toLocaleString() || "0"}</td>
+                          
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-center whitespace-nowrap truncate">
+                            <span className={cn(
+                              "inline-flex items-center px-2 py-0.5 rounded-full font-medium text-[11px] uppercase tracking-wider",
+                              row.statusText === 'Shipped' ? "bg-blue-100 text-blue-700" :
+                              row.statusText === 'Completed' ? "bg-emerald-100 text-emerald-700" : 
+                              "bg-amber-100 text-amber-800"
+                            )}>
+                              {row.statusText}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
+                            <RemarkInput 
+                              initialValue={remarks[row.id]?.text || remarks[row.legacyId || '']?.text || ''}
+                              updatedAt={remarks[row.id]?.updatedAt || remarks[row.legacyId || '']?.updatedAt || null}
+                              rowId={row.id}
+                              onSave={handleRemarkChange}
+                            />
+                          </td>
+                          <td className="px-3 py-2 border-b border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap truncate">{row.deliveredQty?.toLocaleString() || "0"}</td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={18} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
+                        No orders found matching the current filters.
+                      </td>
+                    </tr>
+                  )}
+                  {paddingBottom > 0 && (
+                    <tr className="border-0 p-0 m-0">
+                      <td colSpan={18} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            ) : (
+              <div className="p-3 space-y-3 bg-slate-50 min-h-full" style={{ height: `${totalSize}px`, position: 'relative' }}>
+                {virtualRows.map((virtualRow) => {
+                  const row = filteredItems[virtualRow.index];
+                  const isNewVpo = virtualRow.index > 0 && filteredItems[virtualRow.index - 1].vpoNo !== row.vpoNo;
+                  return (
+                    <div 
+                      key={row.id}
+                      style={{ 
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: `${virtualRow.size}px`,
+                        transform: `translateY(${virtualRow.start}px)`,
+                        padding: '6px'
+                      }}
+                    >
+                      <div className={cn(
+                        "bg-white rounded-xl border p-3 shadow-sm h-full flex flex-col justify-between transition-all active:scale-[0.98]",
+                        isNewVpo ? "border-l-4 border-l-slate-800 border-slate-200" : "border-slate-200"
+                      )}>
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="min-w-0">
+                            <h3 className="font-bold text-slate-900 truncate text-sm">{row.styleNo}</h3>
+                            <p className="text-[10px] text-slate-500 truncate">{row.colorName} • {row.buyer}</p>
+                          </div>
                           <span className={cn(
-                            "inline-flex items-center px-2 py-0.5 rounded-full font-medium text-[11px] uppercase tracking-wider",
+                            "px-1.5 py-0.5 rounded-full font-bold text-[9px] uppercase tracking-tighter shrink-0",
                             row.statusText === 'Shipped' ? "bg-blue-100 text-blue-700" :
                             row.statusText === 'Completed' ? "bg-emerald-100 text-emerald-700" : 
                             "bg-amber-100 text-amber-800"
                           )}>
                             {row.statusText}
                           </span>
-                        </td>
-                        <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px] mb-2">
+                          <div className="flex justify-between border-b border-slate-50 pb-0.5">
+                            <span className="text-slate-400">VPO:</span>
+                            <span className="font-semibold text-slate-700">{row.vpoNo}</span>
+                          </div>
+                          <div className="flex justify-between border-b border-slate-50 pb-0.5">
+                            <span className="text-slate-400">Week:</span>
+                            <span className="font-semibold text-slate-700">{row.weekNo}</span>
+                          </div>
+                          <div className="flex justify-between border-b border-slate-50 pb-0.5">
+                            <span className="text-slate-400">CO Qty:</span>
+                            <span className="font-bold text-slate-900">{row.coQty?.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between border-b border-slate-50 pb-0.5">
+                            <span className="text-slate-400">SewOut:</span>
+                            <span className="font-bold text-indigo-600">{row.cumSewOutQty?.toLocaleString()}</span>
+                          </div>
+                        </div>
+
+                        <div className="mt-auto">
                           <RemarkInput 
                             initialValue={remarks[row.id]?.text || remarks[row.legacyId || '']?.text || ''}
                             updatedAt={remarks[row.id]?.updatedAt || remarks[row.legacyId || '']?.updatedAt || null}
                             rowId={row.id}
                             onSave={handleRemarkChange}
                           />
-                        </td>
-                        <td className="px-3 py-2 border-b border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap truncate">{row.deliveredQty?.toLocaleString() || "0"}</td>
-                      </tr>
-                    );
-                  })
-                ) : (
-                  <tr>
-                    <td colSpan={18} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
-                      No orders found matching the current filters.
-                    </td>
-                  </tr>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {filteredItems.length === 0 && (
+                  <div className="py-12 text-center text-slate-500 italic text-sm">
+                    No orders found.
+                  </div>
                 )}
-                {paddingBottom > 0 && (
-                  <tr className="border-0 p-0 m-0">
-                    <td colSpan={18} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
-                  </tr>
-                )}
-              </tbody>
-            </table>
+              </div>
+            )}
           </div>
         </div>
         </div>
@@ -1268,13 +1358,13 @@ function MetricCard({ title, value, icon, color }: { title: string, value: strin
   };
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm hover:shadow-md transition-shadow duration-200 flex items-center gap-4 group">
-      <div className={cn("p-3 rounded-lg border transition-colors", bgColors[color])}>
-        {icon}
+    <div className="bg-white rounded-xl border border-slate-200 p-3 md:p-5 shadow-sm hover:shadow-md transition-shadow duration-200 flex items-center gap-3 md:gap-4 group">
+      <div className={cn("p-2 md:p-3 rounded-lg border transition-colors", bgColors[color])}>
+        {React.cloneElement(icon as React.ReactElement, { className: "w-4 h-4 md:w-5 md:h-5" })}
       </div>
       <div>
-        <p className="text-[11px] font-semibold text-slate-500 mb-0.5 uppercase tracking-wider group-hover:text-slate-600 transition-colors">{title}</p>
-        <p className="text-2xl font-bold text-slate-900 tracking-tight">{value}</p>
+        <p className="text-[10px] md:text-[11px] font-semibold text-slate-500 mb-0.5 uppercase tracking-wider group-hover:text-slate-600 transition-colors truncate">{title}</p>
+        <p className="text-xl md:text-2xl font-bold text-slate-900 tracking-tight">{value}</p>
       </div>
     </div>
   );
