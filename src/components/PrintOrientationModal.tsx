@@ -26,9 +26,8 @@ export function PrintOrientationModal({
   remarks,
   activeFilters
 }: PrintOrientationModalProps) {
-  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
-  const [includeSummary, setIncludeSummary] = useState<boolean>(true);
-  const [fontSize, setFontSize] = useState<'compact' | 'normal'>('compact');
+  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('landscape');
+  const includeSummary = false;
 
   // Compute summary totals for filtered items
   const totals = useMemo(() => {
@@ -110,9 +109,12 @@ export function PrintOrientationModal({
   // Generate Clean Black & White A4 HTML
   const generateBWPrintHTML = (selectedOrientation: 'portrait' | 'landscape') => {
     const isPortrait = selectedOrientation === 'portrait';
-    const cellFontSize = isPortrait ? (fontSize === 'compact' ? '6.5pt' : '7pt') : (fontSize === 'compact' ? '7.5pt' : '8pt');
-    const headerFontSize = isPortrait ? '7pt' : '7.5pt';
-    const cellPadding = isPortrait ? '2px 4px' : '3px 5px';
+
+    // Generous, crisp font sizes and comfortable box height
+    const cellFontSize = isPortrait ? '8pt' : '9.5pt';
+    const headerFontSize = isPortrait ? '8.5pt' : '9.5pt';
+    const cellPadding = isPortrait ? '5px 5.5px' : '6px 7.5px';
+    const grandTotalFontSize = isPortrait ? '9.5pt' : '11pt';
 
     const now = new Date();
     const dateFormatted = now.toLocaleDateString('en-US', {
@@ -133,24 +135,23 @@ export function PrintOrientationModal({
       const groupRowsHTML = group.items.map(item => {
         overallRowIndex++;
         const co = Number(item.coQty) || 0;
+        const colorDisplay = item.colorCode && item.colorName
+          ? `${item.colorCode}-${item.colorName}`
+          : (item.colorCode || item.colorName || '-');
         const remark = remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '';
 
         return `
           <tr>
-            <td style="text-align: center; color: #444; width: 1%; white-space: nowrap;">${overallRowIndex}</td>
-            <td style="text-align: center; width: 1%; white-space: nowrap;">${item.planDelDate || '-'}</td>
-            <td style="text-align: center; font-weight: 600; width: 1%; white-space: nowrap;">${item.weekNo || '-'}</td>
-            <td style="font-weight: 600; width: 1%; white-space: nowrap;">${item.buyer || '-'}</td>
-            <td style="width: 1%; white-space: nowrap;">${item.styleNo || '-'}</td>
-            <td style="font-weight: 700; text-align: center; width: 1%; white-space: nowrap;">${item.vpoNo || '-'}</td>
-            <td style="text-align: center; width: 1%; white-space: nowrap;">${item.shipmentMode || '-'}</td>
-            <td style="width: 1%; white-space: nowrap;">${item.colorCode || ''}${item.colorName ? ` - ${item.colorName}` : ''}</td>
-            <td style="width: 1%; white-space: nowrap;">${item.destination || '-'}</td>
-            <td style="text-align: center; width: 1%; white-space: nowrap;">${item.packMethod || '-'}</td>
-            <td style="text-align: center; width: 1%; white-space: nowrap;">${item.scheduleNo || '-'}</td>
-            <td style="text-align: right; font-weight: 700; width: 1%; white-space: nowrap;">${co.toLocaleString()}</td>
-            <td style="text-align: center; width: 1%; white-space: nowrap;">${item.statusText || '-'}</td>
-            <td style="word-break: break-word;">${remark}</td>
+            <td style="text-align: center; white-space: nowrap;">${item.planDelDate || '-'}</td>
+            <td style="text-align: center; white-space: nowrap;">${item.weekNo || '-'}</td>
+            <td style="text-align: center; white-space: nowrap;">${co > 0 ? co.toLocaleString() : '-'}</td>
+            <td style="text-align: center; white-space: nowrap;">${item.styleNo || '-'}</td>
+            <td style="font-weight: 800; text-align: center; white-space: nowrap;">${item.vpoNo || '-'}</td>
+            <td style="text-align: center; white-space: nowrap;">${item.destination || '-'}</td>
+            <td style="text-align: center; white-space: nowrap;">${colorDisplay}</td>
+            <td style="font-weight: 800; text-align: center; white-space: nowrap;">${item.scheduleNo || '-'}</td>
+            <td style="text-align: center; white-space: nowrap;">${item.shipmentMode || '-'}</td>
+            <td style="text-align: left; word-break: break-word;">${remark}</td>
           </tr>
         `;
       }).join('');
@@ -160,21 +161,12 @@ export function PrintOrientationModal({
           <!-- Subtle separator space between different VPOs -->
           ${gIdx > 0 ? `
           <tr class="vpo-spacer-row">
-            <td colspan="14"></td>
+            <td colspan="10"></td>
           </tr>
           ` : ''}
 
           <!-- Data rows for this VPO -->
           ${groupRowsHTML}
-
-          <!-- Clean Subtotal row for this VPO -->
-          <tr class="vpo-subtotal-row">
-            <td colspan="11" style="text-align: right; font-weight: bold; text-transform: uppercase;">
-              Subtotal (VPO: ${group.vpoNo}):
-            </td>
-            <td style="text-align: right; font-weight: bold;">${group.totalCO.toLocaleString()}</td>
-            <td colspan="2"></td>
-          </tr>
         </tbody>
       `;
     }).join('');
@@ -320,62 +312,51 @@ export function PrintOrientationModal({
       color: #000000;
     }
 
-    /* Unified Data Table - Black & White with Clean Proportions */
+    /* Unified Data Table - Black & White with Clean Proportions matching user spec */
     table.data-table {
-      width: ${isPortrait ? '100%' : 'auto'};
-      max-width: 100%;
+      width: 100%;
       border-collapse: collapse;
       font-size: ${cellFontSize};
-      border: 1px solid #000000;
-      margin: ${isPortrait ? '0 0 6px 0' : '0 auto 6px auto'};
+      border: 2px solid #000000;
+      margin-bottom: 6px;
     }
     table.data-table th, table.data-table td {
-      border: 0.5px solid #000000;
+      border: 1px solid #000000;
       padding: ${cellPadding};
       vertical-align: middle;
-      line-height: 1.25;
+      line-height: 1.35;
     }
     table.data-table th {
-      background-color: #f1f5f9 !important;
+      background-color: #e2e8f0 !important;
       color: #000000;
       font-weight: 800;
-      text-transform: uppercase;
       font-size: ${headerFontSize};
-      text-align: left;
+      text-align: center;
       white-space: nowrap;
+      border: 1px solid #000000;
     }
-    table.data-table tr:nth-child(even) td {
-      background-color: #fafafa !important;
+    table.data-table tr td {
+      background-color: #ffffff !important;
     }
 
-    /* Subtle clean separator space between different VPOs */
+    /* Subtle clean separator space between different VPOs - Double border like user image */
     tr.vpo-spacer-row td {
       height: 4px !important;
       padding: 0 !important;
-      background-color: #f1f5f9 !important;
-      border-left: none !important;
-      border-right: none !important;
-      border-top: 1.5px solid #000000 !important;
-      border-bottom: 0.5px solid #000000 !important;
-    }
-
-    /* VPO Subtotal Row */
-    tr.vpo-subtotal-row td {
-      background-color: #f8fafc !important;
-      font-weight: bold;
-      border-top: 1px solid #000000 !important;
-      border-bottom: 1.5px solid #000000 !important;
-      font-size: ${headerFontSize};
-      padding: ${cellPadding};
+      background-color: #cbd5e1 !important;
+      border-left: 1px solid #000000 !important;
+      border-right: 1px solid #000000 !important;
+      border-top: 2px solid #000000 !important;
+      border-bottom: 2px solid #000000 !important;
     }
 
     /* Grand Total Row directly in table footer */
     tr.grand-total-row td {
-      background-color: #f1f5f9 !important;
+      background-color: #e2e8f0 !important;
       font-weight: 800;
       border-top: 2px solid #000000 !important;
       border-bottom: 2px solid #000000 !important;
-      font-size: ${headerFontSize};
+      font-size: ${grandTotalFontSize};
       padding: ${cellPadding};
     }
 
@@ -459,32 +440,30 @@ export function PrintOrientationModal({
   <table class="data-table">
     <thead>
       <tr>
-        <th style="text-align: center; width: 1%; white-space: nowrap;">#</th>
-        <th style="text-align: center; width: 1%; white-space: nowrap;">Plan Del Date</th>
-        <th style="text-align: center; width: 1%; white-space: nowrap;">Week</th>
-        <th style="width: 1%; white-space: nowrap;">Buyer</th>
-        <th style="width: 1%; white-space: nowrap;">Style No</th>
-        <th style="text-align: center; width: 1%; white-space: nowrap;">VPO No</th>
-        <th style="text-align: center; width: 1%; white-space: nowrap;">Mode</th>
-        <th style="width: 1%; white-space: nowrap;">Color</th>
-        <th style="width: 1%; white-space: nowrap;">Destination</th>
-        <th style="text-align: center; width: 1%; white-space: nowrap;">Pack</th>
-        <th style="text-align: center; width: 1%; white-space: nowrap;">Schedule No</th>
-        <th style="text-align: right; width: 1%; white-space: nowrap;">CO Qty</th>
-        <th style="text-align: center; width: 1%; white-space: nowrap;">Status</th>
-        <th>Remark</th>
+        <th style="text-align: center; white-space: nowrap;">Plan Del Date</th>
+        <th style="text-align: center; white-space: nowrap;">WEEK NO</th>
+        <th style="text-align: center; white-space: nowrap;">Order Qty</th>
+        <th style="text-align: center; white-space: nowrap;">Style</th>
+        <th style="text-align: center; white-space: nowrap;">VPO No.</th>
+        <th style="text-align: center; white-space: nowrap;">Destination</th>
+        <th style="text-align: center; white-space: nowrap;">Color Name</th>
+        <th style="text-align: center; white-space: nowrap;">Schedule</th>
+        <th style="text-align: center; white-space: nowrap;">Mode</th>
+        <th style="text-align: center; white-space: nowrap;">Remarks</th>
       </tr>
     </thead>
     ${tableBodiesHTML}
     <tfoot>
       <tr class="grand-total-row">
-        <td colspan="11" style="text-align: right; text-transform: uppercase;">
-          OVERALL GRAND TOTAL (${totals.count} LINES &bull; ${totals.vpoCount} VPOS &bull; ${totals.buyersCount} BUYERS):
+        <td colspan="2" style="text-align: right; text-transform: uppercase;">
+          OVERALL TOTAL:
         </td>
-        <td style="text-align: right; font-weight: 900; white-space: nowrap;">
+        <td style="text-align: center; font-weight: 900; white-space: nowrap;">
           ${totals.totalCO.toLocaleString()}
         </td>
-        <td colspan="2"></td>
+        <td colspan="7" style="text-align: left; font-size: 8.5pt; color: #333;">
+          (${totals.count} Lines &bull; ${totals.vpoCount} VPOs &bull; ${totals.buyersCount} Buyers)
+        </td>
       </tr>
     </tfoot>
   </table>
@@ -668,30 +647,6 @@ export function PrintOrientationModal({
                 </p>
               </div>
 
-            </div>
-          </div>
-
-          {/* Quick Options */}
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-            <label className="flex items-center gap-2 cursor-pointer select-none text-slate-700">
-              <input
-                type="checkbox"
-                checked={includeSummary}
-                onChange={(e) => setIncludeSummary(e.target.checked)}
-                className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-              />
-              <span>Include Summary Metrics box on top</span>
-            </label>
-
-            <div className="flex items-center gap-1.5">
-              <span className="text-slate-500 text-[11px]">Table Font:</span>
-              <button
-                type="button"
-                onClick={() => setFontSize(fontSize === 'compact' ? 'normal' : 'compact')}
-                className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-medium"
-              >
-                {fontSize === 'compact' ? 'Compact' : 'Normal'}
-              </button>
             </div>
           </div>
 
