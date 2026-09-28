@@ -6,6 +6,7 @@ import { db } from '../firebase';
 import { doc, setDoc, onSnapshot, writeBatch, collection, getDocs } from 'firebase/firestore';
 import { KPIView } from './KPIView';
 import { SewOutReportModal } from './SewOutReportModal';
+import { PrintOrientationModal } from './PrintOrientationModal';
 
 export function MultiSelectDropdown({
   label,
@@ -801,6 +802,7 @@ export function Dashboard() {
   }, [filteredItems]);
 
   const [showSewOutReport, setShowSewOutReport] = useState(false);
+  const [showPrintModal, setShowPrintModal] = useState(false);
   const [reportInitialMode, setReportInitialMode] = useState<'sewout_50_100' | 'all'>('all');
 
   const handleExportExcel = useCallback(() => {
@@ -987,6 +989,17 @@ export function Dashboard() {
                 KPI Dashboard
               </button>
             </div>
+            <button
+              onClick={() => {
+                setReportInitialMode('all');
+                setShowSewOutReport(true);
+              }}
+              className="inline-flex items-center px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg text-sm font-medium shadow-sm transition-all active:scale-95"
+              title="SewOut Report (Buyer & VPO Wise Analysis)"
+            >
+              <Printer className="w-4 h-4 mr-1.5" />
+              SewOut Analysis
+            </button>
             <button 
               onClick={() => setData(null)}
               disabled={loadingState !== 'idle'}
@@ -1091,13 +1104,10 @@ export function Dashboard() {
               Export
             </button>
             <button
-              onClick={() => {
-                setReportInitialMode('all');
-                setShowSewOutReport(true);
-              }}
+              onClick={() => setShowPrintModal(true)}
               disabled={filteredItems.length === 0}
               className="w-full sm:w-auto px-5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-sm font-medium transition-colors whitespace-nowrap flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed border border-indigo-100"
-              title="Print Production Orders (Buyer & VPO Wise)"
+              title="Print Filtered Orders (Portrait or Landscape A4 B&W)"
             >
               <Printer className="w-4 h-4 mr-2" />
               Print
@@ -1217,11 +1227,29 @@ export function Dashboard() {
 
       </div>
 
-      {/* Production Report & Print Modal (Buyer & VPO Wise) */}
+      {/* A4 Black & White Orientation Print Modal (Portrait / Landscape) */}
+      <PrintOrientationModal
+        isOpen={showPrintModal}
+        onClose={() => setShowPrintModal(false)}
+        data={filteredItems.length > 0 ? filteredItems : (data || [])}
+        remarks={remarks}
+        activeFilters={{
+          search: searchTerm,
+          buyers: filterBuyer,
+          weeks: filterWeekNo,
+          statuses: filterStatus,
+          shipmentModes: filterShipmentMode,
+          destinations: filterDestination,
+          packMethods: filterPackMethod,
+          remarksFilter: filterRemark
+        }}
+      />
+
+      {/* Production Report & Print Center Modal (Buyer & VPO Wise) */}
       <SewOutReportModal
         isOpen={showSewOutReport}
         onClose={() => setShowSewOutReport(false)}
-        data={data || []}
+        data={filteredItems.length > 0 ? filteredItems : (data || [])}
         remarks={remarks}
         initialFilterMode={reportInitialMode}
         initialWeeks={filterWeekNo}

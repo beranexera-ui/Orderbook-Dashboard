@@ -58,16 +58,16 @@ export function SewOutReportModal({
   onClose, 
   data, 
   remarks, 
-  initialFilterMode = 'sewout_50_100',
+  initialFilterMode = 'all',
   initialWeeks,
   initialBuyers
 }: SewOutReportModalProps) {
-  // Preset Mode: 'sewout_50_100' (50-100%) or 'all' (0-100%)
+  // Preset Mode: 'all' (0-100%) or 'sewout_50_100' (50-100%)
   const [reportMode, setReportMode] = useState<'sewout_50_100' | 'all' | 'custom'>(
-    initialFilterMode === 'all' ? 'all' : 'sewout_50_100'
+    initialFilterMode === 'sewout_50_100' ? 'sewout_50_100' : 'all'
   );
 
-  const [minPct, setMinPct] = useState<number>(initialFilterMode === 'all' ? 0 : 50);
+  const [minPct, setMinPct] = useState<number>(initialFilterMode === 'sewout_50_100' ? 50 : 0);
   const [maxPct, setMaxPct] = useState<number>(100);
 
   // Buyer Checkbox State
@@ -91,20 +91,21 @@ export function SewOutReportModal({
   const [printPopupBlockedUrl, setPrintPopupBlockedUrl] = useState<string | null>(null);
   const [statusNotification, setStatusNotification] = useState<{ message: string; type: 'success' | 'warning' | 'info' } | null>(null);
 
-  // Synchronize when initialFilterMode prop changes on open
+  // Synchronize when modal opens or initial props change
   useEffect(() => {
     if (isOpen) {
-      if (initialFilterMode === 'all') {
-        setReportMode('all');
-        setMinPct(0);
-        setMaxPct(100);
-      } else {
+      if (initialFilterMode === 'sewout_50_100') {
         setReportMode('sewout_50_100');
         setMinPct(50);
+        setMaxPct(100);
+      } else {
+        setReportMode('all');
+        setMinPct(0);
         setMaxPct(100);
       }
       setPrintPopupBlockedUrl(null);
       setStatusNotification(null);
+      setSearchQuery('');
     }
   }, [isOpen, initialFilterMode]);
 
@@ -144,9 +145,9 @@ export function SewOutReportModal({
     }));
   }, [data, minPct, maxPct]);
 
-  // Auto-select all available buyers on initial load or range change if none selected
+  // Auto-select buyers when modal opens or availableBuyers changes
   useEffect(() => {
-    if (availableBuyers.length > 0 && selectedBuyers.length === 0) {
+    if (availableBuyers.length > 0) {
       if (initialBuyers && initialBuyers.length > 0) {
         const matching = initialBuyers.filter(b => availableBuyers.some(ab => ab.name === b));
         if (matching.length > 0) {
@@ -155,8 +156,10 @@ export function SewOutReportModal({
         }
       }
       setSelectedBuyers(availableBuyers.map(b => b.name));
+    } else {
+      setSelectedBuyers([]);
     }
-  }, [availableBuyers, initialBuyers]);
+  }, [availableBuyers, initialBuyers, isOpen]);
 
   // Compute all unique weeks available from the dataset
   const availableWeeks = useMemo(() => {
@@ -184,9 +187,9 @@ export function SewOutReportModal({
     }));
   }, [data, minPct, maxPct]);
 
-  // Auto-select all available weeks on initial load or range change if none selected
+  // Auto-select weeks when modal opens or availableWeeks changes
   useEffect(() => {
-    if (availableWeeks.length > 0 && selectedWeeks.length === 0) {
+    if (availableWeeks.length > 0) {
       if (initialWeeks && initialWeeks.length > 0) {
         const matching = initialWeeks.filter(w => availableWeeks.some(aw => aw.name === w));
         if (matching.length > 0) {
@@ -195,8 +198,10 @@ export function SewOutReportModal({
         }
       }
       setSelectedWeeks(availableWeeks.map(w => w.name));
+    } else {
+      setSelectedWeeks([]);
     }
-  }, [availableWeeks, initialWeeks]);
+  }, [availableWeeks, initialWeeks, isOpen]);
 
   // Filtered buyers list in the checklist panel based on search
   const filteredAvailableBuyers = useMemo(() => {
