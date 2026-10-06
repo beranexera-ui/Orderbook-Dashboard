@@ -700,7 +700,7 @@ export function Dashboard() {
   const rowVirtualizer = useVirtualizer({
     count: filteredItems.length,
     getScrollElement: () => tableContainerRef.current,
-    estimateSize: () => isMobile ? 180 : 44,
+    estimateSize: () => isMobile ? 220 : 44,
     overscan: isMobile ? 5 : 15,
   });
 
@@ -1275,8 +1275,16 @@ export function Dashboard() {
                             <span className="font-semibold text-slate-700">{row.vpoNo}</span>
                           </div>
                           <div className="flex justify-between border-b border-slate-50 pb-0.5">
+                            <span className="text-slate-400">Sch No:</span>
+                            <span className="font-semibold text-slate-700">{row.scheduleNo}</span>
+                          </div>
+                          <div className="flex justify-between border-b border-slate-50 pb-0.5">
                             <span className="text-slate-400">Week:</span>
                             <span className="font-semibold text-slate-700">{row.weekNo}</span>
+                          </div>
+                          <div className="flex justify-between border-b border-slate-50 pb-0.5">
+                            <span className="text-slate-400">Del Date:</span>
+                            <span className="font-semibold text-slate-700">{row.planDelDate}</span>
                           </div>
                           <div className="flex justify-between border-b border-slate-50 pb-0.5">
                             <span className="text-slate-400">CO Qty:</span>
