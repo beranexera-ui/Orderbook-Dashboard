@@ -811,7 +811,7 @@ export function Dashboard() {
       const itemWeek = getItemWeekNumber(item.weekNo);
       const minPastWeek = Math.max(1, currentWeekNum - 4);
       const maxPastWeek = currentWeekNum - 1;
-      const matchesPastWeeksOnly = field === 'weekNo' || !filterPastWeeksOnly || (itemWeek >= minPastWeek && itemWeek <= maxPastWeek);
+      const matchesPastWeeksOnly = !filterPastWeeksOnly || (itemWeek >= minPastWeek && itemWeek <= maxPastWeek);
 
       if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesPastWeeksOnly) {
         if (field === 'remark') {
