@@ -750,11 +750,20 @@ export function Dashboard() {
 
       const currentWeekNum = getCurrentISOWeekNum();
       const itemWeek = getItemWeekNumber(item.weekNo);
-      const minPastWeek = Math.max(1, currentWeekNum - 4);
-      const maxPastWeek = currentWeekNum - 1;
-      const matchesPastWeeksOnly = !filterPastWeeksOnly || (itemWeek >= minPastWeek && itemWeek <= maxPastWeek);
 
-      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesPastWeeksOnly;
+      let matchesWeekScope = false;
+      if (filterPastWeeksOnly) {
+        // Past 4 weeks only (e.g. W37..W40)
+        const minPastWeek = Math.max(1, currentWeekNum - 4);
+        const maxPastWeek = currentWeekNum - 1;
+        matchesWeekScope = itemWeek >= minPastWeek && itemWeek <= maxPastWeek;
+      } else {
+        // Default: Current week + next 5 weeks (6 weeks total, e.g. W41..W46)
+        const maxUpcomingWeek = currentWeekNum + 5;
+        matchesWeekScope = itemWeek >= currentWeekNum && itemWeek <= maxUpcomingWeek;
+      }
+
+      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesWeekScope;
     });
   }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, filterPastWeeksOnly, remarks]);
 
@@ -809,11 +818,18 @@ export function Dashboard() {
 
       const currentWeekNum = getCurrentISOWeekNum();
       const itemWeek = getItemWeekNumber(item.weekNo);
-      const minPastWeek = Math.max(1, currentWeekNum - 4);
-      const maxPastWeek = currentWeekNum - 1;
-      const matchesPastWeeksOnly = !filterPastWeeksOnly || (itemWeek >= minPastWeek && itemWeek <= maxPastWeek);
 
-      if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesPastWeeksOnly) {
+      let matchesWeekScope = false;
+      if (filterPastWeeksOnly) {
+        const minPastWeek = Math.max(1, currentWeekNum - 4);
+        const maxPastWeek = currentWeekNum - 1;
+        matchesWeekScope = itemWeek >= minPastWeek && itemWeek <= maxPastWeek;
+      } else {
+        const maxUpcomingWeek = currentWeekNum + 5;
+        matchesWeekScope = itemWeek >= currentWeekNum && itemWeek <= maxUpcomingWeek;
+      }
+
+      if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesWeekScope) {
         if (field === 'remark') {
           options.add(normalizedItemRemark === '' ? '(Empty)' : normalizedItemRemark);
         } else {
