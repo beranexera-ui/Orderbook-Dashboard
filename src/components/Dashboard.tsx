@@ -489,17 +489,28 @@ export function Dashboard() {
     } catch (e) {}
 
     try {
-      const localData = localStorage.getItem('production_dashboard_data');
-      if (localData) {
-        const parsed = JSON.parse(localData);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setData(prev => prev || parsed);
-          fetch('/api/dashboard', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data: parsed, lastUpdated: Date.now(), uploadId: 'local_storage' })
-          }).catch(() => {});
+      const dataKeys = ['production_dashboard_data', 'production_data', 'dashboard_data', 'orders_data', 'excel_data'];
+      let foundData: any[] | null = null;
+      for (const k of dataKeys) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          try {
+            const parsed = JSON.parse(val);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              foundData = parsed;
+              break;
+            }
+          } catch (e) {}
         }
+      }
+
+      if (foundData) {
+        setData(prev => prev || foundData);
+        fetch('/api/dashboard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: foundData, lastUpdated: Date.now(), uploadId: 'local_storage' })
+        }).catch(() => {});
       }
     } catch (e) {}
   }, []);
@@ -620,9 +631,19 @@ export function Dashboard() {
 
     setupSSE();
 
-    // 3. Periodic fallback poll every 4 seconds
+    // 3. Periodic fallback poll every 3 seconds
     const pollTimer = setInterval(() => {
       if (!isMounted) return;
+      fetch('/api/dashboard')
+        .then(res => res.json())
+        .then(dash => {
+          if (dash && Array.isArray(dash.data) && dash.data.length > 0 && isMounted) {
+            setData(prev => (prev && prev.length > 0 ? prev : dash.data));
+            if (dash.lastUpdated) setLastUpdated(dash.lastUpdated);
+          }
+        })
+        .catch(() => {});
+
       fetch('/api/remarks')
         .then(res => res.json())
         .then(remData => {
@@ -640,7 +661,7 @@ export function Dashboard() {
           }
         })
         .catch(() => {});
-    }, 4000);
+    }, 3000);
 
     // 4. Firestore snapshot listeners with silent failover
     let unsubRemarks: any = null;
