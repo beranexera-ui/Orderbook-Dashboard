@@ -3,7 +3,7 @@ import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { db } from '../firebase';
-import { doc, setDoc, onSnapshot, writeBatch, collection, getDocs, collectionGroup } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, writeBatch, collection, getDocs } from 'firebase/firestore';
 import { KPIView } from './KPIView';
 import { SewOutReportModal } from './SewOutReportModal';
 import { PrintOrientationModal } from './PrintOrientationModal';
@@ -286,49 +286,7 @@ const TABLE_COLUMN_WIDTHS = [
   '115px', // Status
   '220px', // Remark
   '115px', // Delivered Qty
-  '110px', // Shipped %
 ];
-
-export const getCurrentISOWeekNum = (): number => {
-  const date = new Date();
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-};
-
-export const getItemWeekNumber = (weekNoStr: string | number | undefined): number => {
-  if (!weekNoStr) return 0;
-  const num = parseInt(String(weekNoStr).replace(/\D/g, ''), 10);
-  return isNaN(num) ? 0 : num;
-};
-
-export const getShippedPercentageInfo = (
-  row: ProductionOrder,
-  currentWeekNum: number = getCurrentISOWeekNum()
-): { text: string; numericPct: number; isCalculated: boolean } => {
-  const co = Number(row.coQty) || 0;
-  let del = Number(row.deliveredQty) || 0;
-
-  if (co <= 0) {
-    return { text: '-', numericPct: 0, isCalculated: false };
-  }
-
-  // Fallback if deliveredQty was 0 but orderToShippedPct was provided in excel
-  if (del === 0 && row.orderToShippedPct && row.orderToShippedPct > 0) {
-    const rawPct = row.orderToShippedPct;
-    del = (co * (rawPct > 1 ? rawPct / 100 : rawPct));
-  }
-
-  const pct = (del / co) * 100;
-
-  return {
-    text: `${pct.toFixed(1)}%`,
-    numericPct: pct,
-    isCalculated: true
-  };
-};
 
 export function Dashboard() {
   const [data, setData] = useState<ProductionOrder[] | null>(null);
@@ -340,7 +298,7 @@ export function Dashboard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
-  const [viewMode, setViewMode] = useState<'table' | 'kpi' | 'past_weeks'>('table');
+  const [viewMode, setViewMode] = useState<'table' | 'kpi'>('table');
 
   // Filters State
   const [searchTerm, setSearchTerm] = useState('');
@@ -354,7 +312,6 @@ export function Dashboard() {
   
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
-  const [filterPastWeeksOnly, setFilterPastWeeksOnly] = useState<boolean>(false);
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -387,52 +344,16 @@ export function Dashboard() {
         if (currentUploadId) {
           try {
             const snapshot = await getDocs(collection(db, `uploads/${currentUploadId}/orders`));
-            
-            // 1. Fetch ALL orders from all past uploads using collectionGroup
-            let allUploadsSnapshot = null;
-            try {
-              allUploadsSnapshot = await getDocs(collectionGroup(db, "orders"));
-            } catch (e) {
-              console.warn("Collection group orders read:", e);
-            }
-
-            // 2. Fetch historicalOrders collection
-            let histSnapshot = null;
-            try {
-              histSnapshot = await getDocs(collection(db, "historicalOrders"));
-            } catch (e) {
-              console.warn("Historical orders collection read error:", e);
-            }
-
-            const orderMap = new Map<string, ProductionOrder>();
-
-            // Load all past upload orders first
-            if (allUploadsSnapshot) {
-              allUploadsSnapshot.forEach(d => {
-                orderMap.set(d.id, d.data() as ProductionOrder);
-              });
-            }
-
-            // Load historical orders
-            if (histSnapshot) {
-              histSnapshot.forEach(d => {
-                orderMap.set(d.id, d.data() as ProductionOrder);
-              });
-            }
-
-            // Override with current upload orders for latest updates
-            snapshot.forEach(d => {
-              orderMap.set(d.id, d.data() as ProductionOrder);
-            });
-
             const loadedData: ProductionOrder[] = [];
+            
             const excludedTerms = [
               'SIZE SET', 'BLACK SEAL', 'SAMPLES_PRESETTING', 'SAMPLES_PP', 'PP_SAMPLE',
               'MTL SAMPLE', 'PP SAMPLE', 'PP SAMPLE PRNT', 'PRE SETTING', 'SAMPLE PP',
               'WASH & TOP', 'PPZ', 'TC-PP', 'TC-PPZ', 'MTL', 'TLT'
             ];
 
-            orderMap.forEach(order => {
+            snapshot.forEach(d => {
+               const order = d.data() as ProductionOrder;
                const hasExcludedTerm = Object.values(order).some(val => {
                  const strVal = String(val).trim().toUpperCase();
                  if (excludedTerms.includes(strVal)) return true;
@@ -479,34 +400,21 @@ export function Dashboard() {
     setUploadProgress({ current: 0, total: parsedData.length });
     try {
       const uploadId = Date.now().toString();
-      // Firestore batch write limit is 500 operations max.
-      // Since each order performs 2 writes (upload collection + historicalOrders),
-      // batchSize 200 = 400 operations, which is safely within the limit.
-      const batchSize = 200; 
+      const batchSize = 400; // max 500 operations per batch
       
-      const chunks: ProductionOrder[][] = [];
-      for (let i = 0; i < parsedData.length; i += batchSize) {
-        chunks.push(parsedData.slice(i, i + batchSize));
-      }
-
       let processed = 0;
-      // Execute up to 4 concurrent batch commits at a time for fast upload
-      const concurrency = 4;
-      for (let i = 0; i < chunks.length; i += concurrency) {
-        const currentGroup = chunks.slice(i, i + concurrency);
-        await Promise.all(currentGroup.map(async (chunk) => {
-          const batch = writeBatch(db);
-          chunk.forEach(order => {
-            const orderRef = doc(db, `uploads/${uploadId}/orders`, order.id);
-            batch.set(orderRef, order);
-
-            const histRef = doc(db, "historicalOrders", order.id);
-            batch.set(histRef, order, { merge: true });
-          });
-          await batch.commit();
-          processed += chunk.length;
-          setUploadProgress({ current: Math.min(processed, parsedData.length), total: parsedData.length });
-        }));
+      for (let i = 0; i < parsedData.length; i += batchSize) {
+        const chunk = parsedData.slice(i, i + batchSize);
+        const batch = writeBatch(db);
+        
+        chunk.forEach(order => {
+          const orderRef = doc(db, `uploads/${uploadId}/orders`, order.id);
+          batch.set(orderRef, order);
+        });
+        
+        await batch.commit();
+        processed += chunk.length;
+        setUploadProgress({ current: processed, total: parsedData.length });
       }
 
       await setDoc(doc(db, "dashboardData", "latest"), {
@@ -514,15 +422,15 @@ export function Dashboard() {
         timestamp: Date.now()
       });
       
-    } catch (err: any) {
-      console.error("Upload error details:", err);
-      setError(`Upload Error: ${err?.message || "Failed to upload data to database."}`);
-      alert(`Upload Error: ${err?.message || "Failed to upload data to database."}`);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to upload data to database.");
+      setLoadingState('idle');
     } finally {
       setTimeout(() => {
         setLoadingState('idle');
         setUploadProgress({ current: 0, total: 0 });
-      }, 500);
+      }, 1000);
     }
   };
 
@@ -553,7 +461,6 @@ export function Dashboard() {
 
           if (jsonData.length === 0) {
             setError("The uploaded file appears to be empty.");
-            setLoadingState('idle');
             return;
           }
 
@@ -584,12 +491,8 @@ export function Dashboard() {
           const startOfCurrentWeek = new Date(today);
           startOfCurrentWeek.setDate(diffToMonday);
 
-          // Allow 26 previous weeks (e.g. Week 20..40) and 26 upcoming weeks
-          const startOfPastWeeks = new Date(startOfCurrentWeek);
-          startOfPastWeeks.setDate(startOfCurrentWeek.getDate() - 180);
-
           const endOf6Weeks = new Date(startOfCurrentWeek);
-          endOf6Weeks.setDate(startOfCurrentWeek.getDate() + 180);
+          endOf6Weeks.setDate(startOfCurrentWeek.getDate() + 42);
           
           const excludedTerms = [
             'SIZE SET', 'BLACK SEAL', 'SAMPLES_PRESETTING', 'SAMPLES_PP', 'PP_SAMPLE',
@@ -598,11 +501,11 @@ export function Dashboard() {
           ];
 
           const filteredData = jsonData.filter((row: any) => {
-            const warehouse = String(getVal(row, ['Prod Warehouse', 'Prod Warehouse ', 'PROD WAREHOUSE', 'Warehouse', 'Prod Wh']) || row['Prod Warehouse'] || '').trim().toUpperCase();
+            const warehouse = String(row['Prod Warehouse'] || '').trim().toUpperCase();
             const isERK = warehouse === 'ERK';
             
-            const rawPlanDelDate = String(getVal(row, ['Plan Del Date', 'Plan Del Date ', 'PLAN DEL DATE', 'PlanDelDate', 'Del Date']) || '').trim();
-            let isWithinWindow = true;
+            const rawPlanDelDate = String(row['Plan Del Date'] || row['Plan Del Date '] || '').trim();
+            let isWithin6Weeks = false;
             
             if (rawPlanDelDate.length === 8) {
               const year = parseInt(rawPlanDelDate.substring(0, 4));
@@ -610,7 +513,7 @@ export function Dashboard() {
               const dayNum = parseInt(rawPlanDelDate.substring(6, 8));
               const rowDate = new Date(year, month, dayNum);
               
-              isWithinWindow = rowDate >= startOfPastWeeks && rowDate < endOf6Weeks;
+              isWithin6Weeks = rowDate >= startOfCurrentWeek && rowDate < endOf6Weeks;
             }
             
             const hasExcludedTerm = Object.values(row).some(val => {
@@ -620,22 +523,21 @@ export function Dashboard() {
               return false;
             });
             
-            return isERK && isWithinWindow && !hasExcludedTerm;
+            return isERK && isWithin6Weeks && !hasExcludedTerm;
           });
 
           if (filteredData.length === 0) {
-            setError(`No data found for Prod Warehouse "ERK" in the selected file.`);
-            setLoadingState('idle');
+            setError(`No data found for Prod Warehouse "ERK" within the 6-week window starting this week.`);
             return;
           }
 
           const parsedData: ProductionOrder[] = filteredData.map((row: any, index: number) => {
-            const rawPlanDelDate = String(getVal(row, ['Plan Del Date', 'Plan Del Date ', 'PLAN DEL DATE', 'PlanDelDate', 'Del Date']) || '').trim();
+            const rawPlanDelDate = String(row['Plan Del Date'] || row['Plan Del Date '] || '').trim();
             const planDelDate = rawPlanDelDate.length === 8 
               ? `${rawPlanDelDate.substring(0, 4)}/${rawPlanDelDate.substring(4, 6)}/${rawPlanDelDate.substring(6, 8)}`
               : rawPlanDelDate;
               
-            let weekNo = String(getVal(row, ['WEEK NO', 'Week No', 'WEEK', 'Week', 'Week Number', 'WeekNo', 'Wk No', 'WK NO', 'WEEK_NO', 'Week #']) || '');
+            let weekNo = String(row['WEEK NO'] || '');
             
             if (!weekNo && rawPlanDelDate.length === 8) {
               const year = parseInt(rawPlanDelDate.substring(0, 4));
@@ -648,17 +550,9 @@ export function Dashboard() {
               weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7).toString();
             }
 
-            const coQty = getNum(row, ['CO Qty', 'CO QTY', 'co qty', 'Co Qty', 'co_qty']);
+            const coQty = getNum(row, ['CO Qty', 'CO QTY', 'co qty']);
             const cumSewOutQty = getNum(row, ['Cum SewOut Qty', 'Cum Sew Out Qty', 'CUM SEWOUT QTY']);
-            const deliveredQty = getNum(row, [
-              'Delivered Qty', 'DELIVERED QTY', 'delivered qty', 'Delivered Qty ', 
-              'Delivered', 'Ship Qty', 'Shipped Qty', 'Del Qty', 'Total Delivered', 
-              'Delivered Quantity', 'Delivery Qty'
-            ]);
-            const orderToShippedPct = getNum(row, [
-              'Order to shipped %', 'Order To Shipped %', 'Shipped %', 'SHIPPED %', 
-              'Shipped%', 'Order To Shipped', 'ORDER TO SHIPPED %'
-            ]);
+            const deliveredQty = getNum(row, ['Delivered Qty', 'DELIVERED QTY', 'delivered qty']);
             const pendingQty = coQty - cumSewOutQty;
             
             let statusText = '';
@@ -707,7 +601,7 @@ export function Dashboard() {
               cumCTNQty: getNum(row, ['Cum CTN Qty', 'CUM CTN QTY', 'Cum Ctn Qty']),
               statusText: statusText,
               deliveredQty: deliveredQty,
-              orderToShippedPct: orderToShippedPct,
+              orderToShippedPct: getNum(row, ['Order to shipped %']),
             };
           });
 
@@ -799,24 +693,9 @@ export function Dashboard() {
       const normalizedItemRemark = itemRemarkText.toUpperCase();
       const matchesRemark = filterRemark.length === 0 || filterRemark.some(r => r === normalizedItemRemark || (r === '(Empty)' && normalizedItemRemark === ''));
 
-      const currentWeekNum = getCurrentISOWeekNum();
-      const itemWeek = getItemWeekNumber(item.weekNo);
-
-      let matchesWeekScope = false;
-      if (filterPastWeeksOnly) {
-        // Past 2 weeks only (e.g. W39..W40 when current week is W41)
-        const minPastWeek = Math.max(1, currentWeekNum - 2);
-        const maxPastWeek = currentWeekNum - 1;
-        matchesWeekScope = itemWeek >= minPastWeek && itemWeek <= maxPastWeek;
-      } else {
-        // Default: Current week + next 5 weeks (6 weeks total, e.g. W41..W46)
-        const maxUpcomingWeek = currentWeekNum + 5;
-        matchesWeekScope = itemWeek >= currentWeekNum && itemWeek <= maxUpcomingWeek;
-      }
-
-      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesWeekScope;
+      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark;
     });
-  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, filterPastWeeksOnly, remarks]);
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, remarks]);
 
   const rowVirtualizer = useVirtualizer({
     count: filteredItems.length,
@@ -867,20 +746,7 @@ export function Dashboard() {
       const normalizedItemRemark = itemRemarkText.toUpperCase();
       const matchesRemark = field === 'remark' || filterRemark.length === 0 || filterRemark.some(r => r === normalizedItemRemark || (r === '(Empty)' && normalizedItemRemark === ''));
 
-      const currentWeekNum = getCurrentISOWeekNum();
-      const itemWeek = getItemWeekNumber(item.weekNo);
-
-      let matchesWeekScope = false;
-      if (filterPastWeeksOnly) {
-        const minPastWeek = Math.max(1, currentWeekNum - 2);
-        const maxPastWeek = currentWeekNum - 1;
-        matchesWeekScope = itemWeek >= minPastWeek && itemWeek <= maxPastWeek;
-      } else {
-        const maxUpcomingWeek = currentWeekNum + 5;
-        matchesWeekScope = itemWeek >= currentWeekNum && itemWeek <= maxUpcomingWeek;
-      }
-
-      if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesWeekScope) {
+      if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark) {
         if (field === 'remark') {
           options.add(normalizedItemRemark === '' ? '(Empty)' : normalizedItemRemark);
         } else {
@@ -890,7 +756,7 @@ export function Dashboard() {
     });
     
     return Array.from(options).filter(Boolean);
-  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, filterPastWeeksOnly, remarks]);
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, remarks]);
 
   // Unique values for dropdowns
   const uniqueBuyers = useMemo(() => Array.from(new Set([...getUniqueOptions('buyer'), ...filterBuyer])).sort(), [getUniqueOptions, filterBuyer]);
@@ -949,33 +815,26 @@ export function Dashboard() {
   const handleExportExcel = useCallback(() => {
     if (filteredItems.length === 0) return;
 
-    const currentWeekNum = getCurrentISOWeekNum();
-
-    const exportData = filteredItems.map(item => {
-      const info = getShippedPercentageInfo(item);
-
-      return {
-        'Plan Del Date': item.planDelDate,
-        'WEEK NO': item.weekNo,
-        'Buyer': item.buyer,
-        'Style No': item.styleNo,
-        'VPO No': item.vpoNo,
-        'Shipment Mode': item.shipmentMode,
-        'Color Code': item.colorCode,
-        'Color Name': item.colorName,
-        'Destination': item.destination,
-        'Pack Method': item.packMethod,
-        'Schedule No': item.scheduleNo,
-        'CO Qty': Number(item.coQty) || 0,
-        'Cum Sew In Qty': Number(item.cumSewInQty) || 0,
-        'Cum SewOut Qty': Number(item.cumSewOutQty) || 0,
-        'Cum CTN Qty': Number(item.cumCTNQty) || 0,
-        'Status': item.statusText,
-        'Remark': remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '',
-        'Delivered Qty': Number(item.deliveredQty) || 0,
-        'Shipped %': info.text
-      };
-    });
+    const exportData = filteredItems.map(item => ({
+      'Plan Del Date': item.planDelDate,
+      'WEEK NO': item.weekNo,
+      'Buyer': item.buyer,
+      'Style No': item.styleNo,
+      'VPO No': item.vpoNo,
+      'Shipment Mode': item.shipmentMode,
+      'Color Code': item.colorCode,
+      'Color Name': item.colorName,
+      'Destination': item.destination,
+      'Pack Method': item.packMethod,
+      'Schedule No': item.scheduleNo,
+      'CO Qty': Number(item.coQty) || 0,
+      'Cum Sew In Qty': Number(item.cumSewInQty) || 0,
+      'Cum SewOut Qty': Number(item.cumSewOutQty) || 0,
+      'Cum CTN Qty': Number(item.cumCTNQty) || 0,
+      'Status': item.statusText,
+      'Remark': remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '',
+      'Delivered Qty': Number(item.deliveredQty) || 0
+    }));
 
     const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
@@ -985,7 +844,7 @@ export function Dashboard() {
       { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
-      { wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 12 }
+      { wch: 15 }, { wch: 30 }, { wch: 15 }
     ];
     worksheet['!cols'] = colWidths;
 
@@ -1102,13 +961,13 @@ export function Dashboard() {
                 Powered by DILEEPA WICKRAMASINGHE
               </span>
             </div>
-            <p className="text-slate-500 mt-1 text-xs md:text-sm flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 flex-wrap">
+            <p className="text-slate-500 mt-1 text-xs md:text-sm flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
               <span>Item-level fulfillment details for the next 6 weeks.</span>
               {lastUpdated && (
-                <span className="text-slate-600 font-medium inline-flex items-center gap-1.5 whitespace-nowrap">
+                <span className="text-slate-600 font-medium flex items-center gap-1.5 truncate">
                   <span className="hidden sm:inline text-slate-300">•</span>
                   <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" /> 
-                  <span>OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                  OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
                 </span>
               )}
             </p>
@@ -1116,10 +975,10 @@ export function Dashboard() {
           <div className="flex flex-wrap items-center gap-2 md:gap-3">
             <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 w-full sm:w-auto">
               <button
-                onClick={() => { setViewMode('table'); setFilterPastWeeksOnly(false); }}
+                onClick={() => setViewMode('table')}
                 className={`flex-1 sm:flex-none flex items-center justify-center px-3 py-1.5 rounded-md text-xs md:text-sm font-medium transition-all ${
                   viewMode === 'table' 
-                    ? 'bg-white text-slate-800 shadow-sm border border-slate-200/50 font-bold' 
+                    ? 'bg-white text-slate-800 shadow-sm border border-slate-200/50' 
                     : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                 }`}
               >
@@ -1127,26 +986,15 @@ export function Dashboard() {
                 Data View
               </button>
               <button
-                onClick={() => { setViewMode('kpi'); setFilterPastWeeksOnly(false); }}
+                onClick={() => setViewMode('kpi')}
                 className={`flex-1 sm:flex-none flex items-center justify-center px-3 py-1.5 rounded-md text-xs md:text-sm font-medium transition-all ${
                   viewMode === 'kpi' 
-                    ? 'bg-white text-slate-800 shadow-sm border border-slate-200/50 font-bold' 
+                    ? 'bg-white text-slate-800 shadow-sm border border-slate-200/50' 
                     : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
                 }`}
               >
                 <BarChart2 className="w-4 h-4 mr-1.5" />
                 KPI Dashboard
-              </button>
-              <button
-                onClick={() => { setViewMode('past_weeks'); setFilterPastWeeksOnly(true); }}
-                className={`flex-1 sm:flex-none flex items-center justify-center px-3 py-1.5 rounded-md text-xs md:text-sm font-medium transition-all ${
-                  viewMode === 'past_weeks' 
-                    ? 'bg-indigo-600 text-white shadow-sm font-bold' 
-                    : 'text-slate-600 hover:text-slate-800 hover:bg-slate-200/50'
-                }`}
-              >
-                <TrendingUp className="w-4 h-4 mr-1.5" />
-                Past 2 Weeks Shipped %
               </button>
             </div>
             <div className="flex gap-2 w-full sm:w-auto">
@@ -1173,22 +1021,7 @@ export function Dashboard() {
           </div>
         </header>
 
-        <div style={{ display: (viewMode === 'table' || viewMode === 'past_weeks') ? 'block' : 'none' }} className="space-y-4 md:space-y-6">
-            {viewMode === 'past_weeks' && (
-              <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center justify-between text-xs font-semibold text-indigo-900 shadow-sm">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-indigo-600" />
-                  <span>Past 2 Weeks Performance View (Week 39 - Week 40) • Schedule-level CO Qty, Delivered Qty & Shipped %</span>
-                </div>
-                <button 
-                  onClick={() => { setViewMode('table'); setFilterPastWeeksOnly(false); }}
-                  className="px-2 py-1 bg-white hover:bg-indigo-100 text-indigo-700 rounded border border-indigo-200 transition-colors text-[11px]"
-                >
-                  Return to Active Orderbook
-                </button>
-              </div>
-            )}
-
+        <div style={{ display: viewMode === 'table' ? 'block' : 'none' }} className="space-y-4 md:space-y-6">
             {/* Summary Metrics */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
               <MetricCard title="Comp. Sch. Line" value={summary.completedScheduleLines?.toLocaleString() || "0"} icon={<CheckCircle className="w-5 h-5 text-emerald-600" />} color="emerald" />
@@ -1243,7 +1076,7 @@ export function Dashboard() {
           </div>
 
           <div className="flex flex-col sm:flex-row flex-wrap gap-2 md:gap-4 items-center">
-            <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 md:gap-3 w-full sm:w-auto flex-1">
+            <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 md:gap-3 w-full sm:w-auto flex-1">
               <MultiSelectDropdown 
                 label="Destinations"
                 options={uniqueDestinations}
@@ -1269,7 +1102,7 @@ export function Dashboard() {
             <div className="grid grid-cols-3 sm:flex gap-2 w-full sm:w-auto">
               <button 
                 onClick={() => {
-                  setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]); setFilterRemark([]); setFilterPastWeeksOnly(false);
+                  setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]); setFilterRemark([]);
                 }}
                 className="px-2 py-2 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-medium transition-colors whitespace-nowrap"
               >
@@ -1300,7 +1133,7 @@ export function Dashboard() {
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div ref={tableContainerRef} className="overflow-auto max-h-[75vh]">
             {!isMobile ? (
-              <table className="w-full min-w-[2290px] table-fixed text-sm text-left border-collapse relative">
+              <table className="w-full min-w-[2180px] table-fixed text-sm text-left border-collapse relative">
                 <colgroup>
                   {TABLE_COLUMN_WIDTHS.map((width, idx) => (
                     <col key={idx} style={{ width }} />
@@ -1326,21 +1159,18 @@ export function Dashboard() {
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">Status</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Remark</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right truncate">Delivered Qty</th>
-                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate" title="Percentage of CO Qty shipped for weeks prior to current week">Shipped %</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paddingTop > 0 && (
                     <tr className="border-0 p-0 m-0">
-                      <td colSpan={19} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                      <td colSpan={18} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                     </tr>
                   )}
                   {virtualRows.length > 0 ? (
                     virtualRows.map((virtualRow) => {
                       const row = filteredItems[virtualRow.index];
                       const isNewVpo = virtualRow.index > 0 && filteredItems[virtualRow.index - 1].vpoNo !== row.vpoNo;
-                      const info = getShippedPercentageInfo(row);
-
                       return (
                         <tr 
                           key={row.id}
@@ -1384,42 +1214,20 @@ export function Dashboard() {
                               onSave={handleRemarkChange}
                             />
                           </td>
-                          <td className="px-3 py-2 border-r border-b border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap truncate">{row.deliveredQty?.toLocaleString() || "0"}</td>
-                          <td className="px-3 py-2 border-b border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap bg-slate-50/50 truncate">
-                            {info.isCalculated ? (
-                              <span className={cn(
-                                "inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold",
-                                info.numericPct >= 100 ? "bg-emerald-100 text-emerald-800" :
-                                info.numericPct > 0 ? "bg-indigo-100 text-indigo-800" :
-                                "bg-slate-100 text-slate-600"
-                              )}>
-                                {info.text}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 font-normal">-</span>
-                            )}
-                          </td>
+                          <td className="px-3 py-2 border-b border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap truncate">{row.deliveredQty?.toLocaleString() || "0"}</td>
                         </tr>
                       );
                     })
                   ) : (
                     <tr>
-                      <td colSpan={19} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
-                        {filterPastWeeksOnly ? (
-                          <div className="flex flex-col items-center justify-center py-2">
-                            <p className="font-bold text-slate-800 text-sm mb-1">No orders found for the Last 2 Past Weeks (W39..W40) in the current dataset.</p>
-                            <p className="text-xs text-slate-500">The current uploaded file contains Weeks {uniqueWeeks.join(', ')}.</p>
-                            <p className="text-xs text-indigo-600 font-medium mt-2">Please click "Upload" to upload an Excel file containing past week data, or toggle "Past 2 Weeks Shipped %" OFF.</p>
-                          </div>
-                        ) : (
-                          "No orders found matching the current filters."
-                        )}
+                      <td colSpan={18} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
+                        No orders found matching the current filters.
                       </td>
                     </tr>
                   )}
                   {paddingBottom > 0 && (
                     <tr className="border-0 p-0 m-0">
-                      <td colSpan={19} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                      <td colSpan={18} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                     </tr>
                   )}
                 </tbody>
@@ -1429,8 +1237,6 @@ export function Dashboard() {
                 {virtualRows.map((virtualRow) => {
                   const row = filteredItems[virtualRow.index];
                   const isNewVpo = virtualRow.index > 0 && filteredItems[virtualRow.index - 1].vpoNo !== row.vpoNo;
-                  const info = getShippedPercentageInfo(row);
-
                   return (
                     <div 
                       key={row.id}
@@ -1488,21 +1294,6 @@ export function Dashboard() {
                             <span className="text-slate-400">SewOut:</span>
                             <span className="font-bold text-indigo-600">{row.cumSewOutQty?.toLocaleString()}</span>
                           </div>
-                          <div className="flex justify-between border-b border-slate-50 pb-0.5">
-                            <span className="text-slate-400">Shipped:</span>
-                            <span className="font-bold text-slate-900">{row.deliveredQty?.toLocaleString()}</span>
-                          </div>
-                          <div className="flex justify-between border-b border-slate-50 pb-0.5">
-                            <span className="text-slate-400">Shipped %:</span>
-                            <span className={cn(
-                              "font-bold",
-                              info.isCalculated
-                                ? (info.numericPct >= 100 ? "text-emerald-600" : info.numericPct > 0 ? "text-indigo-600" : "text-slate-600")
-                                : "text-slate-400"
-                            )}>
-                              {info.text}
-                            </span>
-                          </div>
                         </div>
 
                         <div className="mt-auto">
@@ -1518,12 +1309,8 @@ export function Dashboard() {
                   );
                 })}
                 {filteredItems.length === 0 && (
-                  <div className="py-12 text-center text-slate-500 text-sm">
-                    {filterPastWeeksOnly ? (
-                      <p className="font-bold text-slate-700">No past week orders (Week 40 or earlier) found in uploaded data.</p>
-                    ) : (
-                      <p className="italic">No orders found.</p>
-                    )}
+                  <div className="py-12 text-center text-slate-500 italic text-sm">
+                    No orders found.
                   </div>
                 )}
               </div>

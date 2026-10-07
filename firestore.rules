@@ -10,11 +10,5 @@ service cloud.firestore {
     match /remarks/{document=**} {
       allow read, write: if true;
     }
-    match /historicalOrders/{document=**} {
-      allow read, write: if true;
-    }
-    match /{path=**}/orders/{order} {
-      allow read, write: if true;
-    }
   }
 }
