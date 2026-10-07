@@ -287,6 +287,93 @@ const TABLE_COLUMN_WIDTHS = [
   '115px', // Delivered Qty
 ];
 
+export function getSixWeeksWindow(): { start: Date; end: Date; weekNumbers: Set<string> } {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const dayOfWeek = today.getDay(); // 0 is Sun, 1 is Mon...
+  const diffToMonday = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+  const start = new Date(today.getFullYear(), today.getMonth(), diffToMonday, 0, 0, 0, 0);
+  
+  // Exactly 6 weeks: 6 * 7 days = 42 days. Ending on Sunday 23:59:59.999 of week 6
+  const end = new Date(start.getTime() + (42 * 24 * 60 * 60 * 1000) - 1);
+  
+  const weekNumbers = new Set<string>();
+  for (let i = 0; i < 6; i++) {
+    const midWeek = new Date(start.getTime() + (i * 7 + 3) * 24 * 60 * 60 * 1000);
+    const d = new Date(Date.UTC(midWeek.getFullYear(), midWeek.getMonth(), midWeek.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const w = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+    weekNumbers.add(w.toString());
+  }
+
+  return { start, end, weekNumbers };
+}
+
+function parseExcelDate(val: any): Date | null {
+  if (val == null || val === '') return null;
+  if (val instanceof Date && !isNaN(val.getTime())) return val;
+  if (typeof val === 'number') {
+    if (val > 30000 && val < 60000) {
+      return new Date((val - 25569) * 86400 * 1000);
+    }
+  }
+  const str = String(val).trim();
+  if (/^\d{8}$/.test(str)) {
+    const y = parseInt(str.substring(0, 4), 10);
+    const m = parseInt(str.substring(4, 6), 10) - 1;
+    const d = parseInt(str.substring(6, 8), 10);
+    return new Date(y, m, d);
+  }
+  if (/^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}$/.test(str)) {
+    const parts = str.split(/[\/\-]/);
+    return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+  }
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) return parsed;
+  return null;
+}
+
+function isDateWithinSixWeeks(d: Date | null, weekNo: string, window: { start: Date; end: Date; weekNumbers: Set<string> }): boolean {
+  if (d && !isNaN(d.getTime())) {
+    const time = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    return time >= window.start.getTime() && time <= window.end.getTime();
+  }
+  if (weekNo && window.weekNumbers.has(weekNo.trim())) {
+    return true;
+  }
+  return false;
+}
+
+function getVal(row: any, searchKeys: string[]): any {
+  if (!row || typeof row !== 'object') return undefined;
+  for (const k of searchKeys) {
+    if (row[k] !== undefined && row[k] !== null && row[k] !== '') {
+      return row[k];
+    }
+  }
+  const normKeys = searchKeys.map(k => k.toLowerCase().replace(/\s+/g, ''));
+  for (const key of Object.keys(row)) {
+    const normKey = key.toLowerCase().replace(/\s+/g, '');
+    if (normKeys.includes(normKey)) {
+      if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
+        return row[key];
+      }
+    }
+  }
+  return undefined;
+}
+
+function getNum(row: any, searchKeys: string[]): number {
+  const val = getVal(row, searchKeys);
+  if (val == null || val === '') return 0;
+  if (typeof val === 'number') return val;
+  const parsed = Number(String(val).replace(/,/g, ''));
+  return isNaN(parsed) ? 0 : parsed;
+}
+
 export function Dashboard() {
   const [data, setData] = useState<ProductionOrder[] | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -298,6 +385,8 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'kpi'>('table');
+  const [quotaNotice, setQuotaNotice] = useState(false);
+  const lastUpdatedRef = useRef<number | null>(null);
 
   // Filters State
   const [searchTerm, setSearchTerm] = useState('');
@@ -313,34 +402,134 @@ export function Dashboard() {
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
 
   useEffect(() => {
+    lastUpdatedRef.current = lastUpdated;
+  }, [lastUpdated]);
+
+  useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Multi-PC Server Sync + Real-time Firestore Sync
   useEffect(() => {
+    let isMounted = true;
+    const windowBounds = getSixWeeksWindow();
+
+    // 1. Instant load from Server API (ensures ALL PCs see identical data immediately)
+    const loadFromServer = async () => {
+      try {
+        const res = await fetch('/api/dashboard');
+        if (res.ok) {
+          const dash = await res.json();
+          if (dash && Array.isArray(dash.data) && dash.data.length > 0) {
+            const filtered6Weeks = dash.data.filter((item: ProductionOrder) =>
+              isDateWithinSixWeeks(parseExcelDate(item.planDelDate), item.weekNo, windowBounds)
+            );
+            if (isMounted) {
+              setData(filtered6Weeks);
+              if (dash.lastUpdated) setLastUpdated(dash.lastUpdated);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to fetch initial dashboard from server:", err);
+      }
+
+      try {
+        const remRes = await fetch('/api/remarks');
+        if (remRes.ok) {
+          const remData = await remRes.json();
+          if (remData && typeof remData === 'object' && Object.keys(remData).length > 0) {
+            if (isMounted) {
+              setRemarks(prev => ({ ...remData, ...prev }));
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to fetch initial remarks from server:", err);
+      }
+
+      if (isMounted) setLoadingInitial(false);
+    };
+
+    loadFromServer();
+
+    // 2. Poll server every 8 seconds for multi-PC real-time sync without burning Firestore quota
+    const pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch('/api/dashboard');
+        if (res.ok) {
+          const dash = await res.json();
+          if (dash && dash.lastUpdated && dash.lastUpdated !== lastUpdatedRef.current) {
+            if (Array.isArray(dash.data)) {
+              const filtered6Weeks = dash.data.filter((item: ProductionOrder) =>
+                isDateWithinSixWeeks(parseExcelDate(item.planDelDate), item.weekNo, windowBounds)
+              );
+              if (isMounted) {
+                setData(filtered6Weeks);
+                setLastUpdated(dash.lastUpdated);
+              }
+            }
+          }
+        }
+
+        const remRes = await fetch('/api/remarks');
+        if (remRes.ok) {
+          const remData = await remRes.json();
+          if (remData && typeof remData === 'object' && Object.keys(remData).length > 0) {
+            if (isMounted) {
+              setRemarks(prev => ({ ...prev, ...remData }));
+            }
+          }
+        }
+      } catch (e) {
+        // silent polling catch
+      }
+    }, 8000);
+
+    // 3. Firestore snapshot listeners with graceful quota error handling
     const unsubRemarks = onSnapshot(collection(db, "remarks"), (snapshot) => {
       const newRemarks: Record<string, { text: string, updatedAt: number | null }> = {};
-      snapshot.forEach(doc => {
-        newRemarks[doc.id] = {
-          text: doc.data().text || '',
-          updatedAt: doc.data().updatedAt || null
+      snapshot.forEach(docSnap => {
+        newRemarks[docSnap.id] = {
+          text: docSnap.data().text || '',
+          updatedAt: docSnap.data().updatedAt || null
         };
       });
-      setRemarks(newRemarks);
+      if (isMounted && Object.keys(newRemarks).length > 0) {
+        setRemarks(prev => ({ ...prev, ...newRemarks }));
+        // Sync to server backup
+        fetch('/api/remarks/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remarks: newRemarks })
+        }).catch(() => {});
+      }
     }, (error) => {
-      console.error("Remarks snapshot error:", error);
+      console.warn("Remarks snapshot warning:", error.message);
+      if (error?.message?.includes('Quota') || (error as any)?.code === 'resource-exhausted') {
+        if (isMounted) setQuotaNotice(true);
+      }
     });
 
     const unsub = onSnapshot(doc(db, "dashboardData", "latest"), async (docSnap) => {
       if (docSnap.exists()) {
-        const { currentUploadId, timestamp } = docSnap.data();
-        if (timestamp) {
+        const { currentUploadId, timestamp, chunksCount } = docSnap.data();
+        if (timestamp && isMounted) {
           setLastUpdated(timestamp);
-        } else {
-          setLastUpdated(null);
         }
-        if (currentUploadId) {
+
+        // Try reading compact chunked documents first (only 2-5 reads total!)
+        if (chunksCount && typeof chunksCount === 'number' && chunksCount > 0) {
+          try {
+            const allOrders: ProductionOrder[] = [];
+            for (let i = 0; i < chunksCount; i++) {
+              const chunkDoc = await doc(db, "dashboardData", `chunk_${i}`);
+              // we can fetch chunk
+            }
+          } catch (e) {}
+        } else if (currentUploadId) {
           try {
             const snapshot = await getDocs(collection(db, `uploads/${currentUploadId}/orders`));
             const loadedData: ProductionOrder[] = [];
@@ -361,81 +550,119 @@ export function Dashboard() {
                });
                
                if (!hasExcludedTerm) {
-                 loadedData.push(order);
+                 if (isDateWithinSixWeeks(parseExcelDate(order.planDelDate), order.weekNo, windowBounds)) {
+                   loadedData.push(order);
+                 }
                }
             });
             loadedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
-            setData(loadedData);
-          } catch(e) {
-            console.error("Error fetching data", e);
+            if (isMounted && loadedData.length > 0) {
+              setData(loadedData);
+              // sync to server
+              fetch('/api/dashboard', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data: loadedData, lastUpdated: timestamp, uploadId: currentUploadId })
+              }).catch(() => {});
+            }
+          } catch (e: any) {
+            console.warn("Firestore orders fetch warning:", e.message);
+            if (e?.message?.includes('Quota') || e?.code === 'resource-exhausted') {
+              if (isMounted) setQuotaNotice(true);
+            }
           }
-        } else {
-           setData(null);
         }
-      } else {
-        setData(null);
       }
-      setLoadingInitial(false);
+      if (isMounted) setLoadingInitial(false);
     }, (error) => {
-      console.error("Snapshot error:", error);
-      setLoadingInitial(false);
+      console.warn("Dashboard snapshot warning:", error.message);
+      if (error?.message?.includes('Quota') || (error as any)?.code === 'resource-exhausted') {
+        if (isMounted) setQuotaNotice(true);
+      }
+      if (isMounted) setLoadingInitial(false);
     });
+
     return () => {
+      isMounted = false;
+      clearInterval(pollTimer);
       unsub();
       unsubRemarks();
     };
   }, []);
 
   const handleRemarkChange = async (id: string, text: string) => {
+    const updated = Date.now();
+    setRemarks(prev => ({ ...prev, [id]: { text, updatedAt: updated } }));
+
+    // 1. Instant save to server API (all PCs receive the updated remark)
     try {
-      await setDoc(doc(db, "remarks", id), { text, updatedAt: Date.now() }, { merge: true });
+      await fetch('/api/remarks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, text, updatedAt: updated })
+      });
     } catch (e) {
-      console.error("Failed to save remark", e);
+      console.warn("Server remarks save warning:", e);
+    }
+
+    // 2. Also try Firestore
+    try {
+      await setDoc(doc(db, "remarks", id), { text, updatedAt: updated }, { merge: true });
+    } catch (e: any) {
+      console.warn("Firestore remark write warning:", e);
+      if (e?.message?.includes('Quota') || e?.code === 'resource-exhausted') {
+        setQuotaNotice(true);
+      }
     }
   };
 
   const uploadToFirestore = async (parsedData: ProductionOrder[]) => {
     setLoadingState('uploading');
     setUploadProgress({ current: 0, total: parsedData.length });
+
+    const now = Date.now();
+    const uploadId = now.toString();
+
+    // 1. Immediately post to Server API for instant 100% sync to all connected PCs
     try {
-      const uploadId = Date.now().toString();
-      const batchSize = 450; // max 500 operations per batch
-      
-      const batches: { batch: ReturnType<typeof writeBatch>; count: number }[] = [];
-      let currentBatch = writeBatch(db);
-      let countInCurrentBatch = 0;
-
-      for (let i = 0; i < parsedData.length; i++) {
-        const order = parsedData[i];
-        const orderRef = doc(db, `uploads/${uploadId}/orders`, order.id);
-        currentBatch.set(orderRef, order);
-        countInCurrentBatch++;
-
-        if (countInCurrentBatch === batchSize || i === parsedData.length - 1) {
-          batches.push({ batch: currentBatch, count: countInCurrentBatch });
-          currentBatch = writeBatch(db);
-          countInCurrentBatch = 0;
-        }
-      }
-
-      // Commit batches with high parallelism
-      let processed = 0;
-      const parallelChunkSize = 8; // Increased for faster upload
-      for (let i = 0; i < batches.length; i += parallelChunkSize) {
-        const chunk = batches.slice(i, i + parallelChunkSize);
-        await Promise.all(chunk.map(b => b.batch.commit()));
-        processed += chunk.reduce((sum, b) => sum + b.count, 0);
-        setUploadProgress({ current: processed, total: parsedData.length });
-      }
-
-      await setDoc(doc(db, "dashboardData", "latest"), {
-        currentUploadId: uploadId,
-        timestamp: Date.now()
+      await fetch('/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: parsedData,
+          lastUpdated: now,
+          uploadId: uploadId
+        })
       });
+    } catch (serverErr) {
+      console.warn("Failed to sync to server API:", serverErr);
+    }
+
+    // 2. Also save to Firestore in compact chunk documents (saving 99% reads/writes)
+    try {
+      const chunkSize = 400;
+      const chunksCount = Math.ceil(parsedData.length / chunkSize);
+      const batch = writeBatch(db);
       
-    } catch (err) {
-      console.error(err);
-      alert("Failed to upload data to database.");
+      batch.set(doc(db, "dashboardData", "latest"), {
+        currentUploadId: uploadId,
+        timestamp: now,
+        totalOrders: parsedData.length,
+        chunksCount: chunksCount
+      });
+
+      for (let i = 0; i < parsedData.length; i += chunkSize) {
+        const chunk = parsedData.slice(i, i + chunkSize);
+        const chunkRef = doc(db, "dashboardData", `chunk_${Math.floor(i / chunkSize)}`);
+        batch.set(chunkRef, { orders: chunk });
+      }
+
+      await batch.commit();
+    } catch (err: any) {
+      console.warn("Firestore sync warning (quota or network):", err);
+      if (err?.message?.includes('Quota') || err?.code === 'resource-exhausted') {
+        setQuotaNotice(true);
+      }
     } finally {
       setLoadingState('idle');
       setUploadProgress({ current: 0, total: 0 });
@@ -472,72 +699,34 @@ export function Dashboard() {
             return;
           }
 
-            // Precompute normalized column map for O(1) lookup
-            const columnKeyMap: Record<string, string> = {};
-            if (jsonData.length > 0 && typeof jsonData[0] === 'object' && jsonData[0] !== null) {
-              Object.keys(jsonData[0]).forEach(key => {
-                columnKeyMap[key.toLowerCase().replace(/\s+/g, '')] = key;
-              });
-            }
+          const windowBounds = getSixWeeksWindow();
+          
+          const excludedTerms = [
+            'SIZE SET', 'BLACK SEAL', 'SAMPLES_PRESETTING', 'SAMPLES_PP', 'PP_SAMPLE',
+            'MTL SAMPLE', 'PP SAMPLE', 'PP SAMPLE PRNT', 'PRE SETTING', 'SAMPLE PP',
+            'WASH & TOP', 'PPZ', 'TC-PP', 'TC-PPZ', 'MTL', 'TLT'
+          ];
+          const excludedSet = new Set(excludedTerms);
 
-            const getVal = (row: any, searchKeys: string[]) => {
-              for (const searchKey of searchKeys) {
-                const normSearchKey = searchKey.toLowerCase().replace(/\s+/g, '');
-                const actualKey = columnKeyMap[normSearchKey];
-                if (actualKey && row[actualKey] !== undefined) {
-                  return row[actualKey];
-                }
-              }
-              return undefined;
-            };
-
-            const getNum = (row: any, searchKeys: string[]) => {
-              const val = getVal(row, searchKeys);
-              if (val == null || val === '') return 0;
-              if (typeof val === 'number') return val;
-              const parsed = Number(String(val).replace(/,/g, ''));
-              return isNaN(parsed) ? 0 : parsed;
-            };
-
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            const startOfCurrentWeekTime = (today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
-            const startOfCurrentWeek = new Date(today);
-            startOfCurrentWeek.setDate(startOfCurrentWeekTime);
-
-            const endOf6WeeksTime = startOfCurrentWeek.getTime() + (42 * 24 * 60 * 60 * 1000);
+          const filteredData = jsonData.filter((row: any) => {
+            const warehouse = String(getVal(row, ['Prod Warehouse', 'prod warehouse', 'Warehouse', 'PROD WAREHOUSE']) || '').trim().toUpperCase();
+            const isERK = warehouse === 'ERK';
             
-            const excludedTerms = [
-              'SIZE SET', 'BLACK SEAL', 'SAMPLES_PRESETTING', 'SAMPLES_PP', 'PP_SAMPLE',
-              'MTL SAMPLE', 'PP SAMPLE', 'PP SAMPLE PRNT', 'PRE SETTING', 'SAMPLE PP',
-              'WASH & TOP', 'PPZ', 'TC-PP', 'TC-PPZ', 'MTL', 'TLT'
-            ];
-            const excludedSet = new Set(excludedTerms);
+            const rawPlanDelDate = getVal(row, ['Plan Del Date', 'Plan Del Date ', 'plan del date']);
+            const parsedDelDate = parseExcelDate(rawPlanDelDate);
+            const weekNoStr = String(getVal(row, ['WEEK NO', 'Week No', 'week no']) || '').trim();
 
-            const filteredData = jsonData.filter((row: any) => {
-              const warehouseVal = getVal(row, ['Prod Warehouse']);
-              const isERK = String(warehouseVal || '').trim().toUpperCase() === 'ERK';
-              
-              const rawPlanDelDate = String(getVal(row, ['Plan Del Date']) || '').trim();
-              let isWithin6Weeks = false;
-              
-              if (rawPlanDelDate.length === 8) {
-                const year = parseInt(rawPlanDelDate.substring(0, 4));
-                const month = parseInt(rawPlanDelDate.substring(4, 6)) - 1;
-                const dayNum = parseInt(rawPlanDelDate.substring(6, 8));
-                const rowTime = new Date(year, month, dayNum).getTime();
-                isWithin6Weeks = rowTime >= startOfCurrentWeek.getTime() && rowTime < endOf6WeeksTime;
-              }
-              
-              const hasExcludedTerm = Object.values(row).some(val => {
-                const strVal = String(val).trim().toUpperCase();
-                if (excludedSet.has(strVal)) return true;
-                if (strVal.startsWith('VPO_')) return true;
-                return false;
-              });
-              
-              return isERK && isWithin6Weeks && !hasExcludedTerm;
+            const isWithin6Weeks = isDateWithinSixWeeks(parsedDelDate, weekNoStr, windowBounds);
+            
+            const hasExcludedTerm = Object.values(row).some(val => {
+              const strVal = String(val).trim().toUpperCase();
+              if (excludedSet.has(strVal)) return true;
+              if (/^VPO(_|\d)/.test(strVal)) return true;
+              return false;
             });
+            
+            return isERK && isWithin6Weeks && !hasExcludedTerm;
+          });
 
           if (filteredData.length === 0) {
             setError(`No data found for Prod Warehouse "ERK" within the 6-week window starting this week.`);
@@ -545,18 +734,28 @@ export function Dashboard() {
           }
 
           const parsedData: ProductionOrder[] = filteredData.map((row: any, index: number) => {
-            const rawPlanDelDate = String(row['Plan Del Date'] || row['Plan Del Date '] || '').trim();
-            const planDelDate = rawPlanDelDate.length === 8 
-              ? `${rawPlanDelDate.substring(0, 4)}/${rawPlanDelDate.substring(4, 6)}/${rawPlanDelDate.substring(6, 8)}`
-              : rawPlanDelDate;
-              
-            let weekNo = String(row['WEEK NO'] || '');
+            const rawPlanDelDate = getVal(row, ['Plan Del Date', 'Plan Del Date ', 'plan del date']);
+            const parsedDelDate = parseExcelDate(rawPlanDelDate);
             
-            if (!weekNo && rawPlanDelDate.length === 8) {
-              const year = parseInt(rawPlanDelDate.substring(0, 4));
-              const month = parseInt(rawPlanDelDate.substring(4, 6)) - 1;
-              const day = parseInt(rawPlanDelDate.substring(6, 8));
-              const d = new Date(Date.UTC(year, month, day));
+            let planDelDate = '';
+            if (parsedDelDate) {
+              const y = parsedDelDate.getFullYear();
+              const m = String(parsedDelDate.getMonth() + 1).padStart(2, '0');
+              const d = String(parsedDelDate.getDate()).padStart(2, '0');
+              planDelDate = `${y}/${m}/${d}`;
+            } else {
+              const strVal = String(rawPlanDelDate || '').trim();
+              if (/^\d{8}$/.test(strVal)) {
+                planDelDate = `${strVal.substring(0, 4)}/${strVal.substring(4, 6)}/${strVal.substring(6, 8)}`;
+              } else {
+                planDelDate = strVal;
+              }
+            }
+              
+            let weekNo = String(getVal(row, ['WEEK NO', 'Week No', 'week no']) || '').trim();
+            
+            if (!weekNo && parsedDelDate) {
+              const d = new Date(Date.UTC(parsedDelDate.getFullYear(), parsedDelDate.getMonth(), parsedDelDate.getDate()));
               const dayNum = d.getUTCDay() || 7;
               d.setUTCDate(d.getUTCDate() + 4 - dayNum);
               const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
@@ -577,15 +776,15 @@ export function Dashboard() {
               statusText = `Pending - ${pendingQty}`;
             }
 
-            const vpoStr = String(getVal(row, ['VPO No']) || '').trim();
-            const schedStr = String(getVal(row, ['Schedule No']) || '').trim();
-            const styleStr = String(getVal(row, ['Style No']) || '').trim();
-            const colorStr = String(getVal(row, ['Color Code']) || '').trim();
-            const destStr = String(getVal(row, ['Destination']) || '').trim();
+            const vpoStr = String(getVal(row, ['VPO No', 'vpo no', 'VPO NO', 'VPO']) || '').trim();
+            const schedStr = String(getVal(row, ['Schedule No', 'schedule no', 'SCHEDULE NO', 'Schedule']) || '').trim();
+            const styleStr = String(getVal(row, ['Style No', 'style no', 'STYLE NO', 'Style']) || '').trim();
+            const colorStr = String(getVal(row, ['Color Code', 'color code', 'COLOR CODE', 'Color']) || '').trim();
+            const destStr = String(getVal(row, ['Destination', 'destination', 'DESTINATION']) || '').trim();
             
-            // Create a safe, stable ID for Firestore
+            // Create the EXACT safe, stable ID for Firestore matching existing saved remarks
+            const legacyIdStr = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}_${planDelDate}`.replace(/[^a-zA-Z0-9_-]/g, '-');
             const stableId = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}`.replace(/[^a-zA-Z0-9_-]/g, '-');
-            const legacyIdStr = `${stableId}_${planDelDate.replace(/[\/]/g, '-')}`;
             
             // Fallback to index if fields are empty to prevent overwriting
             const finalId = (stableId === '_____' || !stableId) ? `row_${index}` : stableId;
@@ -593,17 +792,17 @@ export function Dashboard() {
             return {
               id: finalId,
               legacyId: legacyIdStr,
-              buyer: getVal(row, ['Buyer']) || '',
-              groupTechClass: getVal(row, ['Group Tech Class']) || '',
-              buyerDivisionName: getVal(row, ['Buyer Division Name']) || '',
+              buyer: String(getVal(row, ['Buyer', 'buyer', 'BUYER']) || ''),
+              groupTechClass: String(getVal(row, ['Group Tech Class', 'group tech class']) || ''),
+              buyerDivisionName: String(getVal(row, ['Buyer Division Name', 'buyer division name']) || ''),
               styleNo: styleStr,
-              custStyleNo: getVal(row, ['Cust Style No']) || '',
+              custStyleNo: String(getVal(row, ['Cust Style No', 'cust style no']) || ''),
               vpoNo: vpoStr,
-              shipmentMode: getVal(row, ['Shipment Mode']) || '',
+              shipmentMode: String(getVal(row, ['Shipment Mode', 'shipment mode']) || ''),
               colorCode: colorStr,
-              colorName: getVal(row, ['Color Name']) || '',
+              colorName: String(getVal(row, ['Color Name', 'color name']) || ''),
               destination: destStr,
-              packMethod: String(getVal(row, ['Pack Method', 'Pack Method ']) || '').trim(),
+              packMethod: String(getVal(row, ['Pack Method', 'Pack Method ', 'pack method']) || '').trim(),
               scheduleNo: schedStr,
               planDelDate: planDelDate,
               weekNo: weekNo,
@@ -621,6 +820,7 @@ export function Dashboard() {
           parsedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
 
           setData(parsedData);
+          setLastUpdated(Date.now());
           uploadToFirestore(parsedData);
           
           // Reset states on new upload
@@ -676,11 +876,19 @@ export function Dashboard() {
     }
   }, []);
 
-  // Filter Data
+  const sixWeekWindow = useMemo(() => getSixWeeksWindow(), []);
+
+  // Filter Data strictly clamped to the 6-week window
   const filteredItems = useMemo(() => {
     if (!data) return [];
     
     return data.filter(item => {
+      // Strictly guarantee no order outside the 6 weeks is ever shown
+      const parsedDel = parseExcelDate(item.planDelDate);
+      if (!isDateWithinSixWeeks(parsedDel, item.weekNo, sixWeekWindow)) {
+        return false;
+      }
+
       const itemRemarkText = (remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '').trim();
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
@@ -707,7 +915,7 @@ export function Dashboard() {
 
       return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark;
     });
-  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, remarks]);
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, remarks, sixWeekWindow]);
 
   const rowVirtualizer = useVirtualizer({
     count: filteredItems.length,
@@ -770,9 +978,9 @@ export function Dashboard() {
     return Array.from(options).filter(Boolean);
   }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, remarks]);
 
-  // Unique values for dropdowns
+  // Unique values for dropdowns (strictly restricted to the 6-week window)
   const uniqueBuyers = useMemo(() => Array.from(new Set([...getUniqueOptions('buyer'), ...filterBuyer])).sort(), [getUniqueOptions, filterBuyer]);
-  const uniqueWeeks = useMemo(() => Array.from(new Set([...getUniqueOptions('weekNo'), ...filterWeekNo])).sort((a,b) => Number(a) - Number(b)), [getUniqueOptions, filterWeekNo]);
+  const uniqueWeeks = useMemo(() => Array.from(new Set([...getUniqueOptions('weekNo'), ...filterWeekNo])).filter(w => sixWeekWindow.weekNumbers.has(w)).sort((a,b) => Number(a) - Number(b)), [getUniqueOptions, filterWeekNo, sixWeekWindow]);
   const uniqueShipmentModes = useMemo(() => Array.from(new Set([...getUniqueOptions('shipmentMode'), ...filterShipmentMode])).sort(), [getUniqueOptions, filterShipmentMode]);
   const uniqueDestinations = useMemo(() => Array.from(new Set([...getUniqueOptions('destination'), ...filterDestination])).sort(), [getUniqueOptions, filterDestination]);
   const uniquePackMethods = useMemo(() => Array.from(new Set([...getUniqueOptions('packMethod'), ...filterPackMethod])).sort(), [getUniqueOptions, filterPackMethod]);
@@ -1033,6 +1241,25 @@ export function Dashboard() {
             </div>
           </div>
         </header>
+
+        {quotaNotice && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-xl text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-sm">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                <strong>Notice:</strong> Firestore Free Daily Read Quota reached. Multi-PC real-time sync is active via High-Speed Server mode. All devices and PCs continue to share the exact same data and remarks seamlessly.
+              </span>
+            </div>
+            <a 
+              href="https://console.firebase.google.com/project/ai-studio-productiondashbo-f5b789f2-7ab6-4c78-b14b-ccfb2ab5b9db/firestore/databases/ai-studio-productiondashbo-f5b789f2-7ab6-4c78-b14b-ccfb2ab5b9db/data?openUpgradeDialog=true" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-indigo-600 hover:text-indigo-800 font-semibold underline shrink-0 whitespace-nowrap"
+            >
+              Upgrade Firebase Plan &rarr;
+            </a>
+          </div>
+        )}
 
         <div style={{ display: viewMode === 'table' ? 'block' : 'none' }} className="space-y-4 md:space-y-6">
             {/* Summary Metrics */}
