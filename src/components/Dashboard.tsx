@@ -3,7 +3,7 @@ import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { db } from '../firebase';
-import { doc, setDoc, onSnapshot, writeBatch, collection, getDocs } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, writeBatch, collection, getDocs, collectionGroup } from 'firebase/firestore';
 import { KPIView } from './KPIView';
 import { SewOutReportModal } from './SewOutReportModal';
 import { PrintOrientationModal } from './PrintOrientationModal';
@@ -387,6 +387,16 @@ export function Dashboard() {
         if (currentUploadId) {
           try {
             const snapshot = await getDocs(collection(db, `uploads/${currentUploadId}/orders`));
+            
+            // 1. Fetch ALL orders from all past uploads using collectionGroup
+            let allUploadsSnapshot = null;
+            try {
+              allUploadsSnapshot = await getDocs(collectionGroup(db, "orders"));
+            } catch (e) {
+              console.warn("Collection group orders read:", e);
+            }
+
+            // 2. Fetch historicalOrders collection
             let histSnapshot = null;
             try {
               histSnapshot = await getDocs(collection(db, "historicalOrders"));
@@ -396,14 +406,21 @@ export function Dashboard() {
 
             const orderMap = new Map<string, ProductionOrder>();
 
-            // Load historical orders first so past week orders are preserved
+            // Load all past upload orders first
+            if (allUploadsSnapshot) {
+              allUploadsSnapshot.forEach(d => {
+                orderMap.set(d.id, d.data() as ProductionOrder);
+              });
+            }
+
+            // Load historical orders
             if (histSnapshot) {
               histSnapshot.forEach(d => {
                 orderMap.set(d.id, d.data() as ProductionOrder);
               });
             }
 
-            // Override with active upload orders
+            // Override with current upload orders for latest updates
             snapshot.forEach(d => {
               orderMap.set(d.id, d.data() as ProductionOrder);
             });
