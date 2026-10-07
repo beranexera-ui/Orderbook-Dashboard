@@ -387,16 +387,35 @@ export function Dashboard() {
         if (currentUploadId) {
           try {
             const snapshot = await getDocs(collection(db, `uploads/${currentUploadId}/orders`));
+            let histSnapshot = null;
+            try {
+              histSnapshot = await getDocs(collection(db, "historicalOrders"));
+            } catch (e) {
+              console.warn("Historical orders collection read error:", e);
+            }
+
+            const orderMap = new Map<string, ProductionOrder>();
+
+            // Load historical orders first so past week orders are preserved
+            if (histSnapshot) {
+              histSnapshot.forEach(d => {
+                orderMap.set(d.id, d.data() as ProductionOrder);
+              });
+            }
+
+            // Override with active upload orders
+            snapshot.forEach(d => {
+              orderMap.set(d.id, d.data() as ProductionOrder);
+            });
+
             const loadedData: ProductionOrder[] = [];
-            
             const excludedTerms = [
               'SIZE SET', 'BLACK SEAL', 'SAMPLES_PRESETTING', 'SAMPLES_PP', 'PP_SAMPLE',
               'MTL SAMPLE', 'PP SAMPLE', 'PP SAMPLE PRNT', 'PRE SETTING', 'SAMPLE PP',
               'WASH & TOP', 'PPZ', 'TC-PP', 'TC-PPZ', 'MTL', 'TLT'
             ];
 
-            snapshot.forEach(d => {
-               const order = d.data() as ProductionOrder;
+            orderMap.forEach(order => {
                const hasExcludedTerm = Object.values(order).some(val => {
                  const strVal = String(val).trim().toUpperCase();
                  if (excludedTerms.includes(strVal)) return true;
@@ -453,6 +472,9 @@ export function Dashboard() {
         chunk.forEach(order => {
           const orderRef = doc(db, `uploads/${uploadId}/orders`, order.id);
           batch.set(orderRef, order);
+
+          const histRef = doc(db, "historicalOrders", order.id);
+          batch.set(histRef, order, { merge: true });
         });
         
         await batch.commit();
@@ -753,8 +775,8 @@ export function Dashboard() {
 
       let matchesWeekScope = false;
       if (filterPastWeeksOnly) {
-        // Past 4 weeks only (e.g. W37..W40)
-        const minPastWeek = Math.max(1, currentWeekNum - 4);
+        // Past 2 weeks only (e.g. W39..W40 when current week is W41)
+        const minPastWeek = Math.max(1, currentWeekNum - 2);
         const maxPastWeek = currentWeekNum - 1;
         matchesWeekScope = itemWeek >= minPastWeek && itemWeek <= maxPastWeek;
       } else {
@@ -821,7 +843,7 @@ export function Dashboard() {
 
       let matchesWeekScope = false;
       if (filterPastWeeksOnly) {
-        const minPastWeek = Math.max(1, currentWeekNum - 4);
+        const minPastWeek = Math.max(1, currentWeekNum - 2);
         const maxPastWeek = currentWeekNum - 1;
         matchesWeekScope = itemWeek >= minPastWeek && itemWeek <= maxPastWeek;
       } else {
@@ -1196,10 +1218,10 @@ export function Dashboard() {
                     ? "bg-indigo-600 text-white border-indigo-700 shadow-sm" 
                     : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
                 )}
-                title="Show schedule-wise CO Qty, Delivered Qty, and Shipped % for the last 4 past weeks"
+                title="Show schedule-wise CO Qty, Delivered Qty, and Shipped % for the last 2 past weeks"
               >
                 <TrendingUp className="w-3.5 h-3.5" />
-                <span>Past 4 Weeks Shipped %</span>
+                <span>Past 2 Weeks Shipped %</span>
                 {filterPastWeeksOnly && <span className="bg-indigo-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold ml-0.5">ON</span>}
               </button>
             </div>
@@ -1345,9 +1367,9 @@ export function Dashboard() {
                       <td colSpan={19} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
                         {filterPastWeeksOnly ? (
                           <div className="flex flex-col items-center justify-center py-2">
-                            <p className="font-bold text-slate-800 text-sm mb-1">No orders found for the Last 4 Past Weeks (W37..W40) in the current dataset.</p>
-                            <p className="text-xs text-slate-500">The current uploaded file only contains Weeks {uniqueWeeks.join(', ')}.</p>
-                            <p className="text-xs text-indigo-600 font-medium mt-2">Please click "Upload" to re-upload your Excel file with Week 40 data, or toggle "Past 4 Weeks Shipped %" OFF.</p>
+                            <p className="font-bold text-slate-800 text-sm mb-1">No orders found for the Last 2 Past Weeks (W39..W40) in the current dataset.</p>
+                            <p className="text-xs text-slate-500">The current uploaded file contains Weeks {uniqueWeeks.join(', ')}.</p>
+                            <p className="text-xs text-indigo-600 font-medium mt-2">Please click "Upload" to upload an Excel file containing past week data, or toggle "Past 2 Weeks Shipped %" OFF.</p>
                           </div>
                         ) : (
                           "No orders found matching the current filters."
