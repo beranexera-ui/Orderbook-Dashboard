@@ -101,7 +101,6 @@ export interface ProductionOrder {
   cumCTNQty: number;
   statusText: string;
   deliveredQty: number;
-  orderToShippedPct: number;
   remark?: string;
 }
 
@@ -601,7 +600,6 @@ export function Dashboard() {
               cumCTNQty: getNum(row, ['Cum CTN Qty', 'CUM CTN QTY', 'Cum Ctn Qty']),
               statusText: statusText,
               deliveredQty: deliveredQty,
-              orderToShippedPct: getNum(row, ['Order to shipped %']),
             };
           });
 
