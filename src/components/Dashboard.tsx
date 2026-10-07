@@ -2,8 +2,6 @@ import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer, BarChart2, Table } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { db } from '../firebase';
-import { doc, getDoc, getDocFromCache, setDoc, onSnapshot, writeBatch, collection, getDocs, getDocsFromCache } from 'firebase/firestore';
 import { KPIView } from './KPIView';
 import { SewOutReportModal } from './SewOutReportModal';
 import { PrintOrientationModal } from './PrintOrientationModal';
@@ -481,11 +479,6 @@ export function Dashboard() {
       if (Object.keys(foundRemarks).length > 0) {
         setRemarks(prev => {
           const merged = { ...foundRemarks, ...prev };
-          fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164032231649', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: "production_remarks_main", data: { remarks: merged } })
-          }).catch(() => {});
           return merged;
         });
         fetch('/api/remarks/batch', {
@@ -513,12 +506,7 @@ export function Dashboard() {
       }
 
       if (foundData) {
-        setData(prev => prev || foundData);
-        fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164030cc1648', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: "production_dashboard_main", data: { orders: foundData, lastUpdated: Date.now() } })
-        }).catch(() => {});
+        setData(prev => prev && prev.length > 0 ? prev : foundData);
         fetch('/api/dashboard', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -538,37 +526,12 @@ export function Dashboard() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Multi-PC Server Sync + Global Cloud Sync + Real-time SSE + Polling Fallback
+  // Multi-PC Server Sync + Real-time SSE + Polling Fallback
   useEffect(() => {
     let isMounted = true;
 
-    // 1. Load from Global Cloud Bin (ensures Vercel & ALL PCs see identical data immediately)
-    const loadFromCloud = async () => {
-      try {
-        const cloudRes = await fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164030cc1648');
-        if (cloudRes.ok) {
-          const cloudVal = await cloudRes.json();
-          if (cloudVal?.data?.orders && Array.isArray(cloudVal.data.orders) && cloudVal.data.orders.length > 0) {
-            if (isMounted) {
-              setData(cloudVal.data.orders);
-              if (cloudVal.data.lastUpdated) setLastUpdated(cloudVal.data.lastUpdated);
-            }
-          }
-        }
-      } catch (e) {}
-
-      try {
-        const cloudRem = await fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164032231649');
-        if (cloudRem.ok) {
-          const cloudRemVal = await cloudRem.json();
-          if (cloudRemVal?.data?.remarks && typeof cloudRemVal.data.remarks === 'object') {
-            if (isMounted) {
-              setRemarks(prev => ({ ...cloudRemVal.data.remarks, ...prev }));
-            }
-          }
-        }
-      } catch (e) {}
-
+    // Load initial state from central server API
+    const loadFromApi = async () => {
       try {
         const res = await fetch('/api/dashboard');
         if (res.ok) {
@@ -577,6 +540,9 @@ export function Dashboard() {
             if (isMounted) {
               setData(prev => (prev && prev.length > 0 ? prev : dash.data));
               if (dash.lastUpdated) setLastUpdated(dash.lastUpdated);
+              try {
+                localStorage.setItem('production_dashboard_data', JSON.stringify(dash.data));
+              } catch (e) {}
             }
           }
         }
@@ -588,16 +554,22 @@ export function Dashboard() {
           const remData = await remRes.json();
           if (remData && typeof remData === 'object' && Object.keys(remData).length > 0) {
             if (isMounted) {
-              setRemarks(prev => ({ ...remData, ...prev }));
+              setRemarks(prev => {
+                const merged = { ...prev, ...remData };
+                try {
+                  localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+                } catch (e) {}
+                return merged;
+              });
             }
           }
         }
       } catch (err) {}
     };
 
-    loadFromCloud();
+    loadFromApi();
 
-    // 2. Real-time Server-Sent Events (SSE) connection
+    // Real-time Server-Sent Events (SSE) connection
     let es: EventSource | null = null;
     let reconnectTimer: any = null;
 
@@ -608,7 +580,7 @@ export function Dashboard() {
           try {
             const msg = JSON.parse(event.data);
             if (msg.type === 'init') {
-              if (msg.dashboard?.data && Array.isArray(msg.dashboard.data)) {
+              if (msg.dashboard?.data && Array.isArray(msg.dashboard.data) && msg.dashboard.data.length > 0) {
                 if (isMounted) {
                   setData(prev => (prev && prev.length > 0 ? prev : msg.dashboard.data));
                   if (msg.dashboard.lastUpdated) setLastUpdated(msg.dashboard.lastUpdated);
@@ -617,7 +589,7 @@ export function Dashboard() {
               if (msg.remarks && typeof msg.remarks === 'object' && Object.keys(msg.remarks).length > 0) {
                 if (isMounted) {
                   setRemarks(prev => {
-                    const merged = { ...msg.remarks, ...prev };
+                    const merged = { ...prev, ...msg.remarks };
                     try {
                       localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
                     } catch (e) {}
@@ -626,10 +598,13 @@ export function Dashboard() {
                 }
               }
             } else if (msg.type === 'dashboard') {
-              if (Array.isArray(msg.data)) {
+              if (Array.isArray(msg.data) && msg.data.length > 0) {
                 if (isMounted) {
                   setData(msg.data);
                   if (msg.lastUpdated) setLastUpdated(msg.lastUpdated);
+                  try {
+                    localStorage.setItem('production_dashboard_data', JSON.stringify(msg.data));
+                  } catch (e) {}
                 }
               }
             } else if (msg.type === 'remark') {
@@ -665,37 +640,9 @@ export function Dashboard() {
 
     setupSSE();
 
-    // 3. Periodic global cloud poll every 3 seconds for Vercel / Multi-PC
+    // Periodic server API poll every 3 seconds for fallback sync
     const pollTimer = setInterval(() => {
       if (!isMounted) return;
-
-      fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164030cc1648')
-        .then(res => res.json())
-        .then(res => {
-          if (res?.data?.orders && Array.isArray(res.data.orders) && res.data.orders.length > 0 && isMounted) {
-            setData(prev => (prev && prev.length > 0 ? prev : res.data.orders));
-            if (res.data.lastUpdated) setLastUpdated(res.data.lastUpdated);
-          }
-        })
-        .catch(() => {});
-
-      fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164032231649')
-        .then(res => res.json())
-        .then(res => {
-          if (res?.data?.remarks && typeof res.data.remarks === 'object' && isMounted) {
-            setRemarks(prev => {
-              let hasChange = false;
-              for (const id of Object.keys(res.data.remarks)) {
-                if (!prev[id] || prev[id].text !== res.data.remarks[id].text) {
-                  hasChange = true;
-                  break;
-                }
-              }
-              return hasChange ? { ...prev, ...res.data.remarks } : prev;
-            });
-          }
-        })
-        .catch(() => {});
 
       fetch('/api/dashboard')
         .then(res => res.json())
@@ -745,16 +692,7 @@ export function Dashboard() {
       return nextRemarks;
     });
 
-    // 1. Global Cloud Bin save (works 100% on Vercel)
-    try {
-      fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164032231649', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: "production_remarks_main", data: { remarks: nextRemarks } })
-      }).catch(() => {});
-    } catch (e) {}
-
-    // 2. Server API save
+    // Send to Server API
     try {
       await fetch('/api/remarks', {
         method: 'POST',
@@ -776,17 +714,7 @@ export function Dashboard() {
       localStorage.setItem('production_dashboard_data', JSON.stringify(parsedData));
     } catch (e) {}
 
-    // 2. Immediately send to Global Cloud Bin (works 100% on Vercel across all PCs!)
-    fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164030cc1648', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: "production_dashboard_main",
-        data: { orders: parsedData, lastUpdated: now }
-      })
-    }).catch(() => {});
-
-    // 3. Send to Central Server
+    // 2. Send to Central Express Server
     fetch('/api/dashboard', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
