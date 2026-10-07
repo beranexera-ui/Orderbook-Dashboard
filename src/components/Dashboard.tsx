@@ -399,20 +399,32 @@ export function Dashboard() {
     setUploadProgress({ current: 0, total: parsedData.length });
     try {
       const uploadId = Date.now().toString();
-      const batchSize = 400; // max 500 operations per batch
+      const batchSize = 450; // max 500 operations per batch
       
+      const batches: { batch: ReturnType<typeof writeBatch>; count: number }[] = [];
+      let currentBatch = writeBatch(db);
+      let countInCurrentBatch = 0;
+
+      for (let i = 0; i < parsedData.length; i++) {
+        const order = parsedData[i];
+        const orderRef = doc(db, `uploads/${uploadId}/orders`, order.id);
+        currentBatch.set(orderRef, order);
+        countInCurrentBatch++;
+
+        if (countInCurrentBatch === batchSize || i === parsedData.length - 1) {
+          batches.push({ batch: currentBatch, count: countInCurrentBatch });
+          currentBatch = writeBatch(db);
+          countInCurrentBatch = 0;
+        }
+      }
+
+      // Commit batches in parallel chunks of 5 for extreme speed
       let processed = 0;
-      for (let i = 0; i < parsedData.length; i += batchSize) {
-        const chunk = parsedData.slice(i, i + batchSize);
-        const batch = writeBatch(db);
-        
-        chunk.forEach(order => {
-          const orderRef = doc(db, `uploads/${uploadId}/orders`, order.id);
-          batch.set(orderRef, order);
-        });
-        
-        await batch.commit();
-        processed += chunk.length;
+      const parallelChunkSize = 5;
+      for (let i = 0; i < batches.length; i += parallelChunkSize) {
+        const chunk = batches.slice(i, i + parallelChunkSize);
+        await Promise.all(chunk.map(b => b.batch.commit()));
+        processed += chunk.reduce((sum, b) => sum + b.count, 0);
         setUploadProgress({ current: processed, total: parsedData.length });
       }
 
@@ -429,7 +441,7 @@ export function Dashboard() {
       setTimeout(() => {
         setLoadingState('idle');
         setUploadProgress({ current: 0, total: 0 });
-      }, 1000);
+      }, 500);
     }
   };
 
@@ -463,13 +475,24 @@ export function Dashboard() {
             return;
           }
 
+          // Precompute normalized column map for O(1) lookup
+          const columnKeyMap: Record<string, string> = {};
+          if (jsonData.length > 0 && typeof jsonData[0] === 'object' && jsonData[0] !== null) {
+            Object.keys(jsonData[0]).forEach(key => {
+              columnKeyMap[key.toLowerCase().replace(/\s+/g, '')] = key;
+            });
+          }
+
           const getVal = (row: any, searchKeys: string[]) => {
-            const normKeys = searchKeys.map(k => k.toLowerCase().replace(/\s+/g, ''));
-            for (const key of Object.keys(row)) {
-              const normKey = key.toLowerCase().replace(/\s+/g, '');
-              if (normKeys.includes(normKey)) {
-                return row[key];
+            for (const searchKey of searchKeys) {
+              const normSearchKey = searchKey.toLowerCase().replace(/\s+/g, '');
+              const actualKey = columnKeyMap[normSearchKey];
+              if (actualKey && row[actualKey] !== undefined) {
+                return row[actualKey];
               }
+            }
+            for (const searchKey of searchKeys) {
+              if (row[searchKey] !== undefined) return row[searchKey];
             }
             return undefined;
           };
