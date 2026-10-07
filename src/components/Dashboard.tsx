@@ -484,22 +484,29 @@ export function Dashboard() {
       // batchSize 200 = 400 operations, which is safely within the limit.
       const batchSize = 200; 
       
-      let processed = 0;
+      const chunks: ProductionOrder[][] = [];
       for (let i = 0; i < parsedData.length; i += batchSize) {
-        const chunk = parsedData.slice(i, i + batchSize);
-        const batch = writeBatch(db);
-        
-        chunk.forEach(order => {
-          const orderRef = doc(db, `uploads/${uploadId}/orders`, order.id);
-          batch.set(orderRef, order);
+        chunks.push(parsedData.slice(i, i + batchSize));
+      }
 
-          const histRef = doc(db, "historicalOrders", order.id);
-          batch.set(histRef, order, { merge: true });
-        });
-        
-        await batch.commit();
-        processed += chunk.length;
-        setUploadProgress({ current: processed, total: parsedData.length });
+      let processed = 0;
+      // Execute up to 4 concurrent batch commits at a time for fast upload
+      const concurrency = 4;
+      for (let i = 0; i < chunks.length; i += concurrency) {
+        const currentGroup = chunks.slice(i, i + concurrency);
+        await Promise.all(currentGroup.map(async (chunk) => {
+          const batch = writeBatch(db);
+          chunk.forEach(order => {
+            const orderRef = doc(db, `uploads/${uploadId}/orders`, order.id);
+            batch.set(orderRef, order);
+
+            const histRef = doc(db, "historicalOrders", order.id);
+            batch.set(histRef, order, { merge: true });
+          });
+          await batch.commit();
+          processed += chunk.length;
+          setUploadProgress({ current: Math.min(processed, parsedData.length), total: parsedData.length });
+        }));
       }
 
       await setDoc(doc(db, "dashboardData", "latest"), {
@@ -511,12 +518,11 @@ export function Dashboard() {
       console.error("Upload error details:", err);
       setError(`Upload Error: ${err?.message || "Failed to upload data to database."}`);
       alert(`Upload Error: ${err?.message || "Failed to upload data to database."}`);
-      setLoadingState('idle');
     } finally {
       setTimeout(() => {
         setLoadingState('idle');
         setUploadProgress({ current: 0, total: 0 });
-      }, 1000);
+      }, 500);
     }
   };
 
@@ -547,6 +553,7 @@ export function Dashboard() {
 
           if (jsonData.length === 0) {
             setError("The uploaded file appears to be empty.");
+            setLoadingState('idle');
             return;
           }
 
@@ -618,6 +625,7 @@ export function Dashboard() {
 
           if (filteredData.length === 0) {
             setError(`No data found for Prod Warehouse "ERK" in the selected file.`);
+            setLoadingState('idle');
             return;
           }
 
