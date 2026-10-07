@@ -29,6 +29,20 @@ let cachedDashboard: { data: any[] | null; lastUpdated: number | null; uploadId:
 
 let cachedRemarks: Record<string, { text: string; updatedAt: number | null }> = {};
 
+// Active SSE client connections for instant multi-PC real-time sync
+const sseClients = new Set<express.Response>();
+
+function broadcast(payload: object) {
+  const message = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(message);
+    } catch (err) {
+      sseClients.delete(client);
+    }
+  }
+}
+
 // Load on startup
 try {
   if (fs.existsSync(DASHBOARD_FILE)) {
@@ -48,6 +62,35 @@ try {
   console.error('Error reading remarks file:', e);
 }
 
+// Real-time Server-Sent Events endpoint
+app.get('/api/realtime', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  sseClients.add(res);
+
+  // Send current state immediately on connection
+  res.write(`data: ${JSON.stringify({ type: 'init', dashboard: cachedDashboard, remarks: cachedRemarks })}\n\n`);
+
+  // Heartbeat ping every 15s to keep proxy/Cloud Run connections alive
+  const pingTimer = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch (e) {
+      clearInterval(pingTimer);
+      sseClients.delete(res);
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(pingTimer);
+    sseClients.delete(res);
+  });
+});
+
 // API Routes
 app.get('/api/dashboard', (req, res) => {
   res.json(cachedDashboard);
@@ -62,6 +105,7 @@ app.post('/api/dashboard', (req, res) => {
       uploadId: uploadId || Date.now().toString(),
     };
     fs.writeFileSync(DASHBOARD_FILE, JSON.stringify(cachedDashboard));
+    broadcast({ type: 'dashboard', data: cachedDashboard.data, lastUpdated: cachedDashboard.lastUpdated, uploadId: cachedDashboard.uploadId });
     res.json({ success: true, count: cachedDashboard.data?.length || 0 });
   } catch (err: any) {
     console.error('Error saving dashboard:', err);
@@ -82,6 +126,7 @@ app.post('/api/remarks', (req, res) => {
         updatedAt: updatedAt || Date.now(),
       };
       fs.writeFileSync(REMARKS_FILE, JSON.stringify(cachedRemarks));
+      broadcast({ type: 'remark', id, text: text || '', updatedAt: cachedRemarks[id].updatedAt });
     }
     res.json({ success: true, id });
   } catch (err: any) {
@@ -96,6 +141,7 @@ app.post('/api/remarks/batch', (req, res) => {
     if (remarks && typeof remarks === 'object') {
       Object.assign(cachedRemarks, remarks);
       fs.writeFileSync(REMARKS_FILE, JSON.stringify(cachedRemarks));
+      broadcast({ type: 'remarks_batch', remarks: cachedRemarks });
     }
     res.json({ success: true });
   } catch (err: any) {
@@ -118,6 +164,18 @@ async function startServer() {
       appType: 'spa',
     });
     app.use(vite.middlewares);
+
+    // SPA fallback handler
+    app.use('*', async (req, res, next) => {
+      const url = req.originalUrl;
+      try {
+        let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8');
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+      } catch (e) {
+        next(e);
+      }
+    });
   }
 
   app.listen(Number(PORT), '0.0.0.0', () => {

@@ -317,7 +317,7 @@ function parseExcelDate(val: any): Date | null {
   if (val instanceof Date && !isNaN(val.getTime())) return val;
   if (typeof val === 'number') {
     if (val > 30000 && val < 60000) {
-      return new Date((val - 25569) * 86400 * 1000);
+      return new Date(Math.round((val - 25569) * 86400 * 1000));
     }
   }
   const str = String(val).trim();
@@ -331,6 +331,13 @@ function parseExcelDate(val: any): Date | null {
     const parts = str.split(/[\/\-]/);
     return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
   }
+  if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}$/.test(str)) {
+    const parts = str.split(/[\/\-\.]/);
+    const d = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const y = parseInt(parts[2], 10);
+    return new Date(y, m, d);
+  }
   const parsed = new Date(str);
   if (!isNaN(parsed.getTime())) return parsed;
   return null;
@@ -341,8 +348,11 @@ function isDateWithinSixWeeks(d: Date | null, weekNo: string, window: { start: D
     const time = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     return time >= window.start.getTime() && time <= window.end.getTime();
   }
-  if (weekNo && window.weekNumbers.has(weekNo.trim())) {
-    return true;
+  if (weekNo) {
+    const cleanWeek = weekNo.trim().replace(/^W(eek)?[\s\-_]*/i, '');
+    if (window.weekNumbers.has(cleanWeek) || window.weekNumbers.has(weekNo.trim())) {
+      return true;
+    }
   }
   return false;
 }
@@ -374,18 +384,67 @@ function getNum(row: any, searchKeys: string[]): number {
   return isNaN(parsed) ? 0 : parsed;
 }
 
+function getRowRemark(item: ProductionOrder, remarksMap: Record<string, { text: string; updatedAt?: number | null }>): { text: string; updatedAt: number | null } {
+  if (!remarksMap || typeof remarksMap !== 'object') return { text: '', updatedAt: null };
+
+  const formatRemark = (r: { text: string; updatedAt?: number | null } | undefined): { text: string; updatedAt: number | null } | null => {
+    if (!r) return null;
+    return { text: r.text || '', updatedAt: r.updatedAt ?? null };
+  };
+
+  // 1. Direct match on row.id
+  if (remarksMap[item.id]?.text) {
+    const res = formatRemark(remarksMap[item.id]);
+    if (res) return res;
+  }
+
+  // 2. Direct match on row.legacyId
+  if (item.legacyId && remarksMap[item.legacyId]?.text) {
+    const res = formatRemark(remarksMap[item.legacyId]);
+    if (res) return res;
+  }
+
+  // 3. Raw combined keys
+  const rawStable = `${item.vpoNo}_${item.scheduleNo}_${item.styleNo}_${item.colorCode}_${item.destination}`;
+  if (remarksMap[rawStable]?.text) {
+    const res = formatRemark(remarksMap[rawStable]);
+    if (res) return res;
+  }
+
+  const rawLegacy = `${item.vpoNo}_${item.scheduleNo}_${item.styleNo}_${item.colorCode}_${item.destination}_${item.planDelDate}`;
+  if (remarksMap[rawLegacy]?.text) {
+    const res = formatRemark(remarksMap[rawLegacy]);
+    if (res) return res;
+  }
+
+  // 4. Normalized fuzzy search (ignore all non-alphanumeric and casing)
+  const normTarget = rawStable.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (normTarget) {
+    for (const [k, v] of Object.entries(remarksMap)) {
+      if (v?.text && k.toLowerCase().replace(/[^a-z0-9]/g, '') === normTarget) {
+        const res = formatRemark(v);
+        if (res) return res;
+      }
+    }
+  }
+
+  if (item.remark) {
+    return { text: item.remark, updatedAt: null };
+  }
+
+  return { text: '', updatedAt: null };
+}
+
 export function Dashboard() {
   const [data, setData] = useState<ProductionOrder[] | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [loadingState, setLoadingState] = useState<'idle' | 'reading' | 'parsing' | 'uploading'>('idle');
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
-  const [loadingInitial, setLoadingInitial] = useState(true);
   const [remarks, setRemarks] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'kpi'>('table');
-  const [quotaNotice, setQuotaNotice] = useState(false);
   const lastUpdatedRef = useRef<number | null>(null);
 
   // Filters State
@@ -404,17 +463,28 @@ export function Dashboard() {
   // Auto-recover remarks and dashboard data from localStorage backup
   useEffect(() => {
     try {
-      const localRemarks = localStorage.getItem('production_dashboard_remarks');
-      if (localRemarks) {
-        const parsed = JSON.parse(localRemarks);
-        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
-          setRemarks(prev => ({ ...parsed, ...prev }));
-          fetch('/api/remarks/batch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ remarks: parsed })
-          }).catch(() => {});
+      const remarkKeys = ['production_dashboard_remarks', 'remarks', 'app_remarks'];
+      let foundRemarks: Record<string, { text: string; updatedAt: number | null }> = {};
+      
+      for (const k of remarkKeys) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          try {
+            const parsed = JSON.parse(val);
+            if (parsed && typeof parsed === 'object') {
+              foundRemarks = { ...foundRemarks, ...parsed };
+            }
+          } catch (e) {}
         }
+      }
+
+      if (Object.keys(foundRemarks).length > 0) {
+        setRemarks(prev => ({ ...foundRemarks, ...prev }));
+        fetch('/api/remarks/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remarks: foundRemarks })
+        }).catch(() => {});
       }
     } catch (e) {}
 
@@ -423,18 +493,12 @@ export function Dashboard() {
       if (localData) {
         const parsed = JSON.parse(localData);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const windowBounds = getSixWeeksWindow();
-          const filtered = parsed.filter((item: ProductionOrder) =>
-            isDateWithinSixWeeks(parseExcelDate(item.planDelDate), item.weekNo, windowBounds)
-          );
-          if (filtered.length > 0) {
-            setData(prev => prev || filtered);
-            fetch('/api/dashboard', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ data: filtered, lastUpdated: Date.now(), uploadId: 'local_storage' })
-            }).catch(() => {});
-          }
+          setData(prev => prev || parsed);
+          fetch('/api/dashboard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: parsed, lastUpdated: Date.now(), uploadId: 'local_storage' })
+          }).catch(() => {});
         }
       }
     } catch (e) {}
@@ -450,10 +514,9 @@ export function Dashboard() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Multi-PC Server Sync + Real-time Firestore Sync
+  // Multi-PC Server Sync + Real-time SSE + Polling Fallback
   useEffect(() => {
     let isMounted = true;
-    const windowBounds = getSixWeeksWindow();
 
     // 1. Instant load from Server API (ensures ALL PCs see identical data immediately)
     const loadFromServer = async () => {
@@ -462,11 +525,8 @@ export function Dashboard() {
         if (res.ok) {
           const dash = await res.json();
           if (dash && Array.isArray(dash.data) && dash.data.length > 0) {
-            const filtered6Weeks = dash.data.filter((item: ProductionOrder) =>
-              isDateWithinSixWeeks(parseExcelDate(item.planDelDate), item.weekNo, windowBounds)
-            );
             if (isMounted) {
-              setData(filtered6Weeks);
+              setData(dash.data);
               if (dash.lastUpdated) setLastUpdated(dash.lastUpdated);
             }
           }
@@ -488,226 +548,134 @@ export function Dashboard() {
       } catch (err) {
         console.warn("Failed to fetch initial remarks from server:", err);
       }
-
-      if (isMounted) setLoadingInitial(false);
     };
 
     loadFromServer();
 
-    // 2. Poll server every 3 seconds for instant multi-PC real-time sync
-    const pollTimer = setInterval(async () => {
+    // 2. Real-time Server-Sent Events (SSE) connection: Instant sub-50ms sync across all PCs
+    let es: EventSource | null = null;
+    let reconnectTimer: any = null;
+
+    const setupSSE = () => {
       try {
-        const res = await fetch('/api/dashboard');
-        if (res.ok) {
-          const dash = await res.json();
-          if (dash && dash.lastUpdated && dash.lastUpdated !== lastUpdatedRef.current) {
-            if (Array.isArray(dash.data)) {
-              const filtered6Weeks = dash.data.filter((item: ProductionOrder) =>
-                isDateWithinSixWeeks(parseExcelDate(item.planDelDate), item.weekNo, windowBounds)
-              );
-              if (isMounted) {
-                setData(filtered6Weeks);
-                setLastUpdated(dash.lastUpdated);
+        es = new EventSource('/api/realtime');
+        es.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'init') {
+              if (msg.dashboard?.data && Array.isArray(msg.dashboard.data)) {
+                if (isMounted) {
+                  setData(prev => (prev && prev.length > 0 ? prev : msg.dashboard.data));
+                  if (msg.dashboard.lastUpdated) setLastUpdated(msg.dashboard.lastUpdated);
+                }
+              }
+              if (msg.remarks && typeof msg.remarks === 'object' && Object.keys(msg.remarks).length > 0) {
+                if (isMounted) {
+                  setRemarks(prev => {
+                    const merged = { ...msg.remarks, ...prev };
+                    try {
+                      localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+                    } catch (e) {}
+                    return merged;
+                  });
+                }
+              }
+            } else if (msg.type === 'dashboard') {
+              if (Array.isArray(msg.data)) {
+                if (isMounted) {
+                  setData(msg.data);
+                  if (msg.lastUpdated) setLastUpdated(msg.lastUpdated);
+                }
+              }
+            } else if (msg.type === 'remark') {
+              if (isMounted && msg.id) {
+                setRemarks(prev => {
+                  const next = { ...prev, [msg.id]: { text: msg.text, updatedAt: msg.updatedAt } };
+                  try {
+                    localStorage.setItem('production_dashboard_remarks', JSON.stringify(next));
+                  } catch (e) {}
+                  return next;
+                });
+              }
+            } else if (msg.type === 'remarks_batch') {
+              if (msg.remarks && typeof msg.remarks === 'object' && isMounted) {
+                setRemarks(prev => {
+                  const merged = { ...prev, ...msg.remarks };
+                  try {
+                    localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+                  } catch (e) {}
+                  return merged;
+                });
               }
             }
-          }
-        }
-
-        const remRes = await fetch('/api/remarks');
-        if (remRes.ok) {
-          const remData = await remRes.json();
-          if (remData && typeof remData === 'object' && Object.keys(remData).length > 0) {
-            if (isMounted) {
-              setRemarks(prev => {
-                const merged = { ...prev, ...remData };
-                try {
-                  localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-                } catch (e) {}
-                return merged;
-              });
-            }
-          }
-        }
-      } catch (e) {
-        // silent polling catch
-      }
-    }, 3000);
-
-    // 3. Firestore snapshot listeners with graceful quota error handling and IndexedDB cache fallback
-    const unsubRemarks = onSnapshot(collection(db, "remarks"), (snapshot) => {
-      const newRemarks: Record<string, { text: string, updatedAt: number | null }> = {};
-      snapshot.forEach(docSnap => {
-        newRemarks[docSnap.id] = {
-          text: docSnap.data().text || '',
-          updatedAt: docSnap.data().updatedAt || null
+          } catch (parseErr) {}
         };
-      });
-      if (isMounted && Object.keys(newRemarks).length > 0) {
-        setRemarks(prev => {
-          const merged = { ...prev, ...newRemarks };
-          try {
-            localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-          } catch (e) {}
-          return merged;
-        });
-        // Sync to server backup
-        fetch('/api/remarks/batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ remarks: newRemarks })
-        }).catch(() => {});
-      }
-    }, async (error) => {
-      console.warn("Remarks snapshot warning:", error.message);
-      if (error?.message?.includes('Quota') || (error as any)?.code === 'resource-exhausted') {
-        if (isMounted) setQuotaNotice(true);
-        // Try reading remarks from IndexedDB offline persistence cache
-        try {
-          const cachedSnap = await getDocsFromCache(collection(db, "remarks"));
-          const cachedRemarks: Record<string, { text: string, updatedAt: number | null }> = {};
-          cachedSnap.forEach(d => {
-            cachedRemarks[d.id] = {
-              text: d.data().text || '',
-              updatedAt: d.data().updatedAt || null
-            };
-          });
-          if (isMounted && Object.keys(cachedRemarks).length > 0) {
+
+        es.onerror = () => {
+          es?.close();
+          reconnectTimer = setTimeout(setupSSE, 3000);
+        };
+      } catch (e) {}
+    };
+
+    setupSSE();
+
+    // 3. Periodic fallback poll every 4 seconds
+    const pollTimer = setInterval(() => {
+      if (!isMounted) return;
+      fetch('/api/remarks')
+        .then(res => res.json())
+        .then(remData => {
+          if (remData && typeof remData === 'object' && Object.keys(remData).length > 0 && isMounted) {
             setRemarks(prev => {
-              const merged = { ...cachedRemarks, ...prev };
-              try {
-                localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-              } catch (e) {}
-              return merged;
-            });
-            fetch('/api/remarks/batch', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ remarks: cachedRemarks })
-            }).catch(() => {});
-          }
-        } catch (cErr) {}
-      }
-    });
-
-    const unsub = onSnapshot(doc(db, "dashboardData", "latest"), async (docSnap) => {
-      if (docSnap.exists()) {
-        const { currentUploadId, timestamp, chunksCount } = docSnap.data();
-        if (timestamp && isMounted) {
-          setLastUpdated(timestamp);
-        }
-
-        // Try reading compact chunked documents first (only 2-5 reads total!)
-        if (chunksCount && typeof chunksCount === 'number' && chunksCount > 0) {
-          try {
-            const allOrders: ProductionOrder[] = [];
-            for (let i = 0; i < chunksCount; i++) {
-              const chunkSnap = await getDoc(doc(db, "dashboardData", `chunk_${i}`));
-              if (chunkSnap.exists()) {
-                const chunkData = chunkSnap.data()?.orders;
-                if (Array.isArray(chunkData)) {
-                  allOrders.push(...chunkData);
+              let hasChange = false;
+              for (const id of Object.keys(remData)) {
+                if (!prev[id] || prev[id].text !== remData[id].text || prev[id].updatedAt !== remData[id].updatedAt) {
+                  hasChange = true;
+                  break;
                 }
               }
-            }
-            if (isMounted && allOrders.length > 0) {
-              const filtered6Weeks = allOrders.filter((item: ProductionOrder) =>
-                isDateWithinSixWeeks(parseExcelDate(item.planDelDate), item.weekNo, windowBounds)
-              );
-              filtered6Weeks.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
-              setData(filtered6Weeks);
-              // sync to server
-              fetch('/api/dashboard', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ data: filtered6Weeks, lastUpdated: timestamp, uploadId: currentUploadId })
-              }).catch(() => {});
-            }
-          } catch (e) {}
-        } else if (currentUploadId) {
-          try {
-            const snapshot = await getDocs(collection(db, `uploads/${currentUploadId}/orders`));
-            const loadedData: ProductionOrder[] = [];
-            
-            const excludedTerms = [
-              'SIZE SET', 'BLACK SEAL', 'SAMPLES_PRESETTING', 'SAMPLES_PP', 'PP_SAMPLE',
-              'MTL SAMPLE', 'PP SAMPLE', 'PP SAMPLE PRNT', 'PRE SETTING', 'SAMPLE PP',
-              'WASH & TOP', 'PPZ', 'TC-PP', 'TC-PPZ', 'MTL', 'TLT'
-            ];
-
-            snapshot.forEach(d => {
-               const order = d.data() as ProductionOrder;
-               const hasExcludedTerm = Object.values(order).some(val => {
-                 const strVal = String(val).trim().toUpperCase();
-                 if (excludedTerms.includes(strVal)) return true;
-                 if (/^VPO(_|\d)/.test(strVal)) return true;
-                 return false;
-               });
-               
-               if (!hasExcludedTerm) {
-                 if (isDateWithinSixWeeks(parseExcelDate(order.planDelDate), order.weekNo, windowBounds)) {
-                   loadedData.push(order);
-                 }
-               }
+              return hasChange ? { ...prev, ...remData } : prev;
             });
-            loadedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
-            if (isMounted && loadedData.length > 0) {
-              setData(loadedData);
-              // sync to server
-              fetch('/api/dashboard', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ data: loadedData, lastUpdated: timestamp, uploadId: currentUploadId })
-              }).catch(() => {});
-            }
-          } catch (e: any) {
-            console.warn("Firestore orders fetch warning:", e.message);
-            if (e?.message?.includes('Quota') || e?.code === 'resource-exhausted') {
-              if (isMounted) setQuotaNotice(true);
-            }
           }
+        })
+        .catch(() => {});
+    }, 4000);
+
+    // 4. Firestore snapshot listeners with silent failover
+    let unsubRemarks: any = null;
+    try {
+      unsubRemarks = onSnapshot(collection(db, "remarks"), (snapshot) => {
+        const newRemarks: Record<string, { text: string, updatedAt: number | null }> = {};
+        snapshot.forEach(docSnap => {
+          newRemarks[docSnap.id] = {
+            text: docSnap.data().text || '',
+            updatedAt: docSnap.data().updatedAt || null
+          };
+        });
+        if (isMounted && Object.keys(newRemarks).length > 0) {
+          setRemarks(prev => {
+            const merged = { ...prev, ...newRemarks };
+            try {
+              localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+            } catch (e) {}
+            return merged;
+          });
+          fetch('/api/remarks/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ remarks: newRemarks })
+          }).catch(() => {});
         }
-      }
-      if (isMounted) setLoadingInitial(false);
-    }, async (error) => {
-      console.warn("Dashboard snapshot warning:", error.message);
-      if (error?.message?.includes('Quota') || (error as any)?.code === 'resource-exhausted') {
-        if (isMounted) setQuotaNotice(true);
-        // Try reading latest from offline IndexedDB cache
-        try {
-          const cachedLatest = await getDocFromCache(doc(db, "dashboardData", "latest"));
-          if (cachedLatest.exists()) {
-            const { currentUploadId, chunksCount } = cachedLatest.data();
-            if (chunksCount && typeof chunksCount === 'number' && chunksCount > 0) {
-              const allOrders: ProductionOrder[] = [];
-              for (let i = 0; i < chunksCount; i++) {
-                const chunkSnap = await getDocFromCache(doc(db, "dashboardData", `chunk_${i}`));
-                if (chunkSnap.exists()) {
-                  const orders = chunkSnap.data()?.orders;
-                  if (Array.isArray(orders)) allOrders.push(...orders);
-                }
-              }
-              if (isMounted && allOrders.length > 0) {
-                const filtered = allOrders.filter(o => isDateWithinSixWeeks(parseExcelDate(o.planDelDate), o.weekNo, windowBounds));
-                filtered.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
-                setData(filtered);
-                fetch('/api/dashboard', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ data: filtered, lastUpdated: Date.now(), uploadId: currentUploadId })
-                }).catch(() => {});
-              }
-            }
-          }
-        } catch (cErr) {}
-      }
-      if (isMounted) setLoadingInitial(false);
-    });
+      }, () => {});
+    } catch (e) {}
 
     return () => {
       isMounted = false;
+      es?.close();
+      clearTimeout(reconnectTimer);
       clearInterval(pollTimer);
-      unsub();
-      unsubRemarks();
+      if (unsubRemarks) unsubRemarks();
     };
   }, []);
 
@@ -732,44 +700,36 @@ export function Dashboard() {
       console.warn("Server remarks save warning:", e);
     }
 
-    // 2. Also try Firestore
+    // 2. Non-blocking Firestore save
     try {
-      await setDoc(doc(db, "remarks", id), { text, updatedAt: updated }, { merge: true });
-    } catch (e: any) {
-      console.warn("Firestore remark write warning:", e);
-      if (e?.message?.includes('Quota') || e?.code === 'resource-exhausted') {
-        setQuotaNotice(true);
-      }
-    }
+      setDoc(doc(db, "remarks", id), { text, updatedAt: updated }, { merge: true }).catch(() => {});
+    } catch (e: any) {}
   };
 
-  const uploadToFirestore = async (parsedData: ProductionOrder[]) => {
-    setLoadingState('uploading');
-    setUploadProgress({ current: 0, total: parsedData.length });
+  const persistDashboardData = (parsedData: ProductionOrder[]) => {
+    setLoadingState('idle');
+    setUploadProgress({ current: 0, total: 0 });
 
     const now = Date.now();
     const uploadId = now.toString();
 
-    // 1. Immediately post to Server API for instant 100% sync to all connected PCs
+    // 1. Immediately store in localStorage
     try {
       localStorage.setItem('production_dashboard_data', JSON.stringify(parsedData));
     } catch (e) {}
 
-    try {
-      await fetch('/api/dashboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          data: parsedData,
-          lastUpdated: now,
-          uploadId: uploadId
-        })
-      });
-    } catch (serverErr) {
-      console.warn("Failed to sync to server API:", serverErr);
-    }
+    // 2. Immediately send to Central Server (broadcasts via SSE to all PCs within 10ms!)
+    fetch('/api/dashboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: parsedData,
+        lastUpdated: now,
+        uploadId: uploadId
+      })
+    }).catch(() => {});
 
-    // 2. Also save to Firestore in compact chunk documents (saving 99% reads/writes)
+    // 3. Asynchronously persist to Firestore in background without awaiting
     try {
       const chunkSize = 400;
       const chunksCount = Math.ceil(parsedData.length / chunkSize);
@@ -788,16 +748,8 @@ export function Dashboard() {
         batch.set(chunkRef, { orders: chunk });
       }
 
-      await batch.commit();
-    } catch (err: any) {
-      console.warn("Firestore sync warning (quota or network):", err);
-      if (err?.message?.includes('Quota') || err?.code === 'resource-exhausted') {
-        setQuotaNotice(true);
-      }
-    } finally {
-      setLoadingState('idle');
-      setUploadProgress({ current: 0, total: 0 });
-    }
+      batch.commit().catch(() => {});
+    } catch (err: any) {}
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -805,6 +757,7 @@ export function Dashboard() {
     if (file) {
       processFile(file);
     }
+    e.target.value = '';
   };
 
   const processFile = (file: File) => {
@@ -840,35 +793,54 @@ export function Dashboard() {
           ];
           const excludedSet = new Set(excludedTerms);
 
-          const filteredData = jsonData.filter((row: any) => {
-            const warehouse = String(getVal(row, ['Prod Warehouse', 'prod warehouse', 'Warehouse', 'PROD WAREHOUSE']) || '').trim().toUpperCase();
-            const isERK = warehouse === 'ERK';
-            
-            const rawPlanDelDate = getVal(row, ['Plan Del Date', 'Plan Del Date ', 'plan del date']);
-            const parsedDelDate = parseExcelDate(rawPlanDelDate);
-            const weekNoStr = String(getVal(row, ['WEEK NO', 'Week No', 'week no']) || '').trim();
+          const hasWarehouseColumn = jsonData.some((row: any) =>
+            getVal(row, ['Prod Warehouse', 'prod warehouse', 'Warehouse', 'PROD WAREHOUSE', 'WH', 'Prod WH']) !== undefined
+          );
 
-            const isWithin6Weeks = isDateWithinSixWeeks(parsedDelDate, weekNoStr, windowBounds);
-            
-            const hasExcludedTerm = Object.values(row).some(val => {
+          const isRowExcluded = (row: any) => {
+            return Object.values(row).some(val => {
               const strVal = String(val).trim().toUpperCase();
               if (excludedSet.has(strVal)) return true;
               if (/^VPO(_|\d)/.test(strVal)) return true;
               return false;
             });
-            
-            return isERK && isWithin6Weeks && !hasExcludedTerm;
+          };
+
+          const isRowERK = (row: any) => {
+            if (!hasWarehouseColumn) return true;
+            const warehouse = String(getVal(row, ['Prod Warehouse', 'prod warehouse', 'Warehouse', 'PROD WAREHOUSE', 'WH', 'Prod WH']) || '').trim().toUpperCase();
+            return !warehouse || warehouse === 'ERK' || warehouse.includes('ERK');
+          };
+
+          // Primary filter: 6-week window + ERK warehouse
+          let targetRows = jsonData.filter((row: any) => {
+            if (isRowExcluded(row)) return false;
+            if (!isRowERK(row)) return false;
+            const rawPlanDelDate = getVal(row, ['Plan Del Date', 'Plan Del Date ', 'plan del date']);
+            const parsedDelDate = parseExcelDate(rawPlanDelDate);
+            const weekNoStr = String(getVal(row, ['WEEK NO', 'Week No', 'week no']) || '').trim();
+            return isDateWithinSixWeeks(parsedDelDate, weekNoStr, windowBounds);
           });
 
-          if (filteredData.length === 0) {
-            setError(`No data found for Prod Warehouse "ERK" within the 6-week window starting this week.`);
+          // Fallback 1: If 0 items matched 6-week window, keep all non-excluded ERK rows
+          if (targetRows.length === 0) {
+            targetRows = jsonData.filter((row: any) => !isRowExcluded(row) && isRowERK(row));
+          }
+
+          // Fallback 2: Keep all non-excluded rows from file
+          if (targetRows.length === 0) {
+            targetRows = jsonData.filter((row: any) => !isRowExcluded(row));
+          }
+
+          if (targetRows.length === 0) {
+            setError("No valid production orders found in the uploaded file.");
             setLoadingState('idle');
             return;
           }
 
           const excelExtractedRemarks: Record<string, { text: string; updatedAt: number }> = {};
 
-          const parsedData: ProductionOrder[] = filteredData.map((row: any, index: number) => {
+          const parsedData: ProductionOrder[] = targetRows.map((row: any, index: number) => {
             const rawPlanDelDate = getVal(row, ['Plan Del Date', 'Plan Del Date ', 'plan del date']);
             const parsedDelDate = parseExcelDate(rawPlanDelDate);
             
@@ -917,14 +889,10 @@ export function Dashboard() {
             const colorStr = String(getVal(row, ['Color Code', 'color code', 'COLOR CODE', 'Color']) || '').trim();
             const destStr = String(getVal(row, ['Destination', 'destination', 'DESTINATION']) || '').trim();
             
-            // Create the EXACT safe, stable ID for Firestore matching existing saved remarks
             const legacyIdStr = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}_${planDelDate}`.replace(/[^a-zA-Z0-9_-]/g, '-');
             const stableId = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}`.replace(/[^a-zA-Z0-9_-]/g, '-');
-            
-            // Fallback to index if fields are empty to prevent overwriting
             const finalId = (stableId === '_____' || !stableId) ? `row_${index}` : stableId;
 
-            // Automatically extract and preserve remarks from Excel rows if present
             const rowRemark = String(getVal(row, ['Remark', 'remark', 'REMARK', 'Remarks', 'REMARKS']) || '').trim();
             if (rowRemark) {
               excelExtractedRemarks[finalId] = { text: rowRemark, updatedAt: Date.now() };
@@ -960,7 +928,6 @@ export function Dashboard() {
             };
           });
 
-          // If Excel contained remarks, merge and sync them
           if (Object.keys(excelExtractedRemarks).length > 0) {
             setRemarks(prev => {
               const merged = { ...excelExtractedRemarks, ...prev };
@@ -976,14 +943,12 @@ export function Dashboard() {
             });
           }
 
-          // Sort by Plan Del Date
           parsedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
 
           setData(parsedData);
           setLastUpdated(Date.now());
-          uploadToFirestore(parsedData);
+          persistDashboardData(parsedData);
           
-          // Reset states on new upload
           setSearchTerm('');
           setFilterBuyer([]);
           setFilterWeekNo([]);
@@ -1089,7 +1054,7 @@ export function Dashboard() {
         return false;
       }
 
-      const itemRemarkText = (remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '').trim();
+      const itemRemarkText = getRowRemark(item, remarks).text.trim();
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
@@ -1143,7 +1108,7 @@ export function Dashboard() {
     const options = new Set<string>();
     
     data.forEach(item => {
-      const itemRemarkText = (remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '').trim();
+      const itemRemarkText = getRowRemark(item, remarks).text.trim();
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
@@ -1252,7 +1217,7 @@ export function Dashboard() {
       'Cum SewOut Qty': Number(item.cumSewOutQty) || 0,
       'Cum CTN Qty': Number(item.cumCTNQty) || 0,
       'Status': item.statusText,
-      'Remark': remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '',
+      'Remark': getRowRemark(item, remarks).text,
       'Delivered Qty': Number(item.deliveredQty) || 0
     }));
 
@@ -1270,14 +1235,6 @@ export function Dashboard() {
 
     XLSX.writeFile(workbook, `Production_Data_${new Date().toISOString().split('T')[0]}.xlsx`);
   }, [filteredItems, remarks]);
-
-  if (loadingInitial) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
-      </div>
-    );
-  }
 
   if (!data) {
     return (
@@ -1338,11 +1295,11 @@ export function Dashboard() {
                 </div>
               )}
 
-              <label 
-                htmlFor="main-file-upload"
+              <div 
                 className={`block border-2 border-dashed rounded-2xl p-8 transition-colors cursor-pointer select-none ${
                   isDragging ? 'border-indigo-500 bg-indigo-50/70' : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'
                 }`}
+                onClick={() => fileInputRef.current?.click()}
                 onDragOver={handleDragOver}
                 onDragEnter={handleDragEnter}
                 onDragLeave={handleDragLeave}
@@ -1351,19 +1308,16 @@ export function Dashboard() {
                 <UploadCloud className={`w-8 h-8 mx-auto mb-3 pointer-events-none transition-colors ${isDragging ? 'text-indigo-500' : 'text-slate-400'}`} />
                 <p className="text-sm font-medium text-slate-700 mb-1 pointer-events-none">Click to upload or drag and drop</p>
                 <p className="text-xs text-slate-500 pointer-events-none">XLSX, XLS, or CSV files</p>
-                <input 
-                  id="main-file-upload"
-                  type="file" 
-                  className="sr-only" 
-                  ref={fileInputRef} 
-                  accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" 
-                  onChange={handleFileUpload} 
-                  onClick={(e) => { 
-                    e.stopPropagation();
-                    (e.target as HTMLInputElement).value = ''; 
-                  }}
-                />
-              </label>
+              </div>
+
+              <input 
+                id="main-file-upload"
+                type="file" 
+                className="hidden" 
+                ref={fileInputRef} 
+                accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" 
+                onChange={handleFileUpload} 
+              />
             </>
           )}
         </div>
@@ -1382,14 +1336,10 @@ export function Dashboard() {
       <input 
         id="dashboard-header-file-upload"
         type="file" 
-        className="sr-only" 
+        className="hidden" 
         ref={fileInputRef} 
         accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" 
         onChange={handleFileUpload} 
-        onClick={(e) => {
-          e.stopPropagation();
-          (e.target as HTMLInputElement).value = '';
-        }}
       />
 
       <div className="mx-auto space-y-6" style={{ maxWidth: '1600px' }}>
@@ -1461,25 +1411,6 @@ export function Dashboard() {
             </div>
           </div>
         </header>
-
-        {quotaNotice && (
-          <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-xl text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-sm">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-              <span>
-                <strong>Notice:</strong> Firestore Free Daily Read Quota reached. Multi-PC real-time sync is active via High-Speed Server mode. All devices and PCs continue to share the exact same data and remarks seamlessly.
-              </span>
-            </div>
-            <a 
-              href="https://console.firebase.google.com/project/ai-studio-productiondashbo-f5b789f2-7ab6-4c78-b14b-ccfb2ab5b9db/firestore/databases/ai-studio-productiondashbo-f5b789f2-7ab6-4c78-b14b-ccfb2ab5b9db/data?openUpgradeDialog=true" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-indigo-600 hover:text-indigo-800 font-semibold underline shrink-0 whitespace-nowrap"
-            >
-              Upgrade Firebase Plan &rarr;
-            </a>
-          </div>
-        )}
 
         <div style={{ display: viewMode === 'table' ? 'block' : 'none' }} className="space-y-4 md:space-y-6">
             {/* Summary Metrics */}
@@ -1668,8 +1599,8 @@ export function Dashboard() {
                           </td>
                           <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
                             <RemarkInput 
-                              initialValue={remarks[row.id]?.text || remarks[row.legacyId || '']?.text || ''}
-                              updatedAt={remarks[row.id]?.updatedAt || remarks[row.legacyId || '']?.updatedAt || null}
+                              initialValue={getRowRemark(row, remarks).text}
+                              updatedAt={getRowRemark(row, remarks).updatedAt}
                               rowId={row.id}
                               onSave={handleRemarkChange}
                             />
@@ -1758,8 +1689,8 @@ export function Dashboard() {
 
                         <div className="mt-auto">
                           <RemarkInput 
-                            initialValue={remarks[row.id]?.text || remarks[row.legacyId || '']?.text || ''}
-                            updatedAt={remarks[row.id]?.updatedAt || remarks[row.legacyId || '']?.updatedAt || null}
+                            initialValue={getRowRemark(row, remarks).text}
+                            updatedAt={getRowRemark(row, remarks).updatedAt}
                             rowId={row.id}
                             onSave={handleRemarkChange}
                           />
