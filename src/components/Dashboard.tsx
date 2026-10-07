@@ -479,7 +479,10 @@ export function Dashboard() {
     setUploadProgress({ current: 0, total: parsedData.length });
     try {
       const uploadId = Date.now().toString();
-      const batchSize = 400; // max 500 operations per batch
+      // Firestore batch write limit is 500 operations max.
+      // Since each order performs 2 writes (upload collection + historicalOrders),
+      // batchSize 200 = 400 operations, which is safely within the limit.
+      const batchSize = 200; 
       
       let processed = 0;
       for (let i = 0; i < parsedData.length; i += batchSize) {
@@ -504,9 +507,10 @@ export function Dashboard() {
         timestamp: Date.now()
       });
       
-    } catch (err) {
-      console.error(err);
-      alert("Failed to upload data to database.");
+    } catch (err: any) {
+      console.error("Upload error details:", err);
+      setError(`Upload Error: ${err?.message || "Failed to upload data to database."}`);
+      alert(`Upload Error: ${err?.message || "Failed to upload data to database."}`);
       setLoadingState('idle');
     } finally {
       setTimeout(() => {
