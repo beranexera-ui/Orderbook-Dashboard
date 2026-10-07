@@ -793,13 +793,27 @@ export function Dashboard() {
               try {
                 localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
               } catch (e) {}
-              fetch('/api/remarks/batch', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ remarks: merged })
-              }).catch(() => {});
               return merged;
             });
+
+            // Sync extracted remarks to Firestore in background
+            const syncExtracted = async () => {
+              try {
+                const keys = Object.keys(excelExtractedRemarks);
+                // Firestore batch limit is 500
+                for (let i = 0; i < keys.length; i += 500) {
+                  const batch = writeBatch(db);
+                  const chunk = keys.slice(i, i + 500);
+                  chunk.forEach(id => {
+                    batch.set(doc(db, 'remarks', id), excelExtractedRemarks[id]);
+                  });
+                  await batch.commit();
+                }
+              } catch (err) {
+                console.error("Batch remark sync failed", err);
+              }
+            };
+            syncExtracted();
           }
 
           parsedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
@@ -1216,6 +1230,11 @@ export function Dashboard() {
                   OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
                 </span>
               )}
+              <span className="text-slate-400 font-medium flex items-center gap-1.5 truncate">
+                <span className="hidden sm:inline text-slate-300">•</span>
+                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                Cloud Sync Active
+              </span>
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 md:gap-3">
