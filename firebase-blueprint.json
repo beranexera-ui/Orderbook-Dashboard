@@ -1,11 +1,52 @@
 {
-  "collections": [
-    {
-      "name": "dashboardData",
-      "securityRules": {
-        "read": "true",
-        "write": "true"
+  "entities": {
+    "ProductionOrder": {
+      "title": "Production Order",
+      "description": "Represents a single production order item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "buyer": { "type": "string" },
+        "styleNo": { "type": "string" },
+        "vpoNo": { "type": "string" },
+        "planDelDate": { "type": "string" },
+        "weekNo": { "type": "string" },
+        "coQty": { "type": "number" },
+        "cumSewOutQty": { "type": "number" },
+        "statusText": { "type": "string" }
+      }
+    },
+    "DashboardData": {
+      "title": "Dashboard Data",
+      "description": "The main dashboard state",
+      "type": "object",
+      "properties": {
+        "orders": {
+          "type": "array",
+          "items": { "$ref": "ProductionOrder" }
+        },
+        "lastUpdated": { "type": "number" },
+        "uploadId": { "type": "string" }
+      }
+    },
+    "Remark": {
+      "title": "Remark",
+      "description": "A user-added remark for an order",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string" },
+        "updatedAt": { "type": "number" }
       }
     }
-  ]
+  },
+  "firestore": {
+    "dashboardData/main": {
+      "schema": "DashboardData",
+      "description": "Stores the central dashboard order data"
+    },
+    "remarks/{remarkId}": {
+      "schema": "Remark",
+      "description": "Stores individual remarks for orders"
+    }
+  }
 }

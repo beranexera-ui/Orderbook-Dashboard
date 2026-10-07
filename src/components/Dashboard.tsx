@@ -2,9 +2,46 @@ import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer, BarChart2, Table } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { db } from '../firebase';
+import { doc, getDoc, setDoc, onSnapshot, collection, getDocs, writeBatch, getDocFromServer } from 'firebase/firestore';
 import { KPIView } from './KPIView';
 import { SewOutReportModal } from './SewOutReportModal';
 import { PrintOrientationModal } from './PrintOrientationModal';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: null,
+      email: null,
+      emailVerified: null,
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 export function MultiSelectDropdown({
   label,
@@ -458,251 +495,99 @@ export function Dashboard() {
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
 
-  // Auto-recover remarks and dashboard data from localStorage backup
+  const [showPrintModal, setShowPrintModal] = useState(false);
+  const [showSewOutReport, setShowSewOutReport] = useState(false);
+  const [reportInitialMode, setReportInitialMode] = useState<'sewout_50_100' | 'all'>('all');
+
+  // 1. Initial validation & setup
   useEffect(() => {
-    try {
-      const remarkKeys = ['production_dashboard_remarks', 'remarks', 'app_remarks'];
-      let foundRemarks: Record<string, { text: string; updatedAt: number | null }> = {};
-      
-      for (const k of remarkKeys) {
-        const val = localStorage.getItem(k);
-        if (val) {
-          try {
-            const parsed = JSON.parse(val);
-            if (parsed && typeof parsed === 'object') {
-              foundRemarks = { ...foundRemarks, ...parsed };
-            }
-          } catch (e) {}
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, 'dashboardData', 'main'));
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('Quota exceeded')) {
+          setError("Firestore free tier quota exceeded. It will reset in 24 hours.");
         }
       }
-
-      if (Object.keys(foundRemarks).length > 0) {
-        setRemarks(prev => {
-          const merged = { ...foundRemarks, ...prev };
-          return merged;
-        });
-        fetch('/api/remarks/batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ remarks: foundRemarks })
-        }).catch(() => {});
-      }
-    } catch (e) {}
-
-    try {
-      const dataKeys = ['production_dashboard_data', 'production_data', 'dashboard_data', 'orders_data', 'excel_data'];
-      let foundData: any[] | null = null;
-      for (const k of dataKeys) {
-        const val = localStorage.getItem(k);
-        if (val) {
-          try {
-            const parsed = JSON.parse(val);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              foundData = parsed;
-              break;
-            }
-          } catch (e) {}
-        }
-      }
-
-      if (foundData) {
-        setData(prev => prev && prev.length > 0 ? prev : foundData);
-        fetch('/api/dashboard', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: foundData, lastUpdated: Date.now(), uploadId: 'local_storage' })
-        }).catch(() => {});
-      }
-    } catch (e) {}
+    }
+    testConnection();
   }, []);
 
-  useEffect(() => {
-    lastUpdatedRef.current = lastUpdated;
-  }, [lastUpdated]);
-
-  useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  // Multi-PC Server Sync + Real-time SSE + Polling Fallback
+  // 2. Real-time Sync from Firestore
   useEffect(() => {
     let isMounted = true;
 
-    // Load initial state from central server API
-    const loadFromApi = async () => {
-      try {
-        const res = await fetch('/api/dashboard');
-        if (res.ok) {
-          const dash = await res.json();
-          if (dash && Array.isArray(dash.data) && dash.data.length > 0) {
-            if (isMounted) {
-              setData(prev => (prev && prev.length > 0 ? prev : dash.data));
-              if (dash.lastUpdated) setLastUpdated(dash.lastUpdated);
-              try {
-                localStorage.setItem('production_dashboard_data', JSON.stringify(dash.data));
-              } catch (e) {}
-            }
-          }
-        }
-      } catch (err) {}
-
-      try {
-        const remRes = await fetch('/api/remarks');
-        if (remRes.ok) {
-          const remData = await remRes.json();
-          if (remData && typeof remData === 'object' && Object.keys(remData).length > 0) {
-            if (isMounted) {
-              setRemarks(prev => {
-                const merged = { ...prev, ...remData };
-                try {
-                  localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-                } catch (e) {}
-                return merged;
-              });
-            }
-          }
-        }
-      } catch (err) {}
-    };
-
-    loadFromApi();
-
-    // Real-time Server-Sent Events (SSE) connection
-    let es: EventSource | null = null;
-    let reconnectTimer: any = null;
-
-    const setupSSE = () => {
-      try {
-        es = new EventSource('/api/realtime');
-        es.onmessage = (event) => {
+    const unsubDashboard = onSnapshot(doc(db, 'dashboardData', 'main'), (snap) => {
+      if (snap.exists()) {
+        const val = snap.data();
+        if (val.orders && Array.isArray(val.orders)) {
+          setData(val.orders);
+          setLastUpdated(val.lastUpdated || null);
           try {
-            const msg = JSON.parse(event.data);
-            if (msg.type === 'init') {
-              if (msg.dashboard?.data && Array.isArray(msg.dashboard.data) && msg.dashboard.data.length > 0) {
-                if (isMounted) {
-                  setData(prev => (prev && prev.length > 0 ? prev : msg.dashboard.data));
-                  if (msg.dashboard.lastUpdated) setLastUpdated(msg.dashboard.lastUpdated);
-                }
-              }
-              if (msg.remarks && typeof msg.remarks === 'object' && Object.keys(msg.remarks).length > 0) {
-                if (isMounted) {
-                  setRemarks(prev => {
-                    const merged = { ...prev, ...msg.remarks };
-                    try {
-                      localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-                    } catch (e) {}
-                    return merged;
-                  });
-                }
-              }
-            } else if (msg.type === 'dashboard') {
-              if (Array.isArray(msg.data) && msg.data.length > 0) {
-                if (isMounted) {
-                  setData(msg.data);
-                  if (msg.lastUpdated) setLastUpdated(msg.lastUpdated);
-                  try {
-                    localStorage.setItem('production_dashboard_data', JSON.stringify(msg.data));
-                  } catch (e) {}
-                }
-              }
-            } else if (msg.type === 'remark') {
-              if (isMounted && msg.id) {
-                setRemarks(prev => {
-                  const next = { ...prev, [msg.id]: { text: msg.text, updatedAt: msg.updatedAt } };
-                  try {
-                    localStorage.setItem('production_dashboard_remarks', JSON.stringify(next));
-                  } catch (e) {}
-                  return next;
-                });
-              }
-            } else if (msg.type === 'remarks_batch') {
-              if (msg.remarks && typeof msg.remarks === 'object' && isMounted) {
-                setRemarks(prev => {
-                  const merged = { ...prev, ...msg.remarks };
-                  try {
-                    localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-                  } catch (e) {}
-                  return merged;
-                });
-              }
-            }
-          } catch (parseErr) {}
-        };
+            localStorage.setItem('production_dashboard_data', JSON.stringify(val.orders));
+          } catch (e) {}
+        }
+      }
+    }, (err) => {
+      if (err.message.includes('Quota exceeded')) {
+        setError("Quota exceeded. Sync paused.");
+      }
+      handleFirestoreError(err, OperationType.GET, 'dashboardData/main');
+    });
 
-        es.onerror = () => {
-          es?.close();
-          reconnectTimer = setTimeout(setupSSE, 3000);
-        };
-      } catch (e) {}
-    };
-
-    setupSSE();
-
-    // Periodic server API poll every 3 seconds for fallback sync
-    const pollTimer = setInterval(() => {
-      if (!isMounted) return;
-
-      fetch('/api/dashboard')
-        .then(res => res.json())
-        .then(dash => {
-          if (dash && Array.isArray(dash.data) && dash.data.length > 0 && isMounted) {
-            setData(prev => (prev && prev.length > 0 ? prev : dash.data));
-            if (dash.lastUpdated) setLastUpdated(dash.lastUpdated);
-          }
-        })
-        .catch(() => {});
-
-      fetch('/api/remarks')
-        .then(res => res.json())
-        .then(remData => {
-          if (remData && typeof remData === 'object' && Object.keys(remData).length > 0 && isMounted) {
-            setRemarks(prev => {
-              let hasChange = false;
-              for (const id of Object.keys(remData)) {
-                if (!prev[id] || prev[id].text !== remData[id].text || prev[id].updatedAt !== remData[id].updatedAt) {
-                  hasChange = true;
-                  break;
-                }
-              }
-              return hasChange ? { ...prev, ...remData } : prev;
-            });
-          }
-        })
-        .catch(() => {});
-    }, 3000);
+    const unsubRemarks = onSnapshot(collection(db, 'remarks'), (snap) => {
+      const newRemarks: Record<string, { text: string, updatedAt: number | null }> = {};
+      snap.forEach(d => {
+        newRemarks[d.id] = d.data() as any;
+      });
+      setRemarks(prev => {
+        const merged = { ...prev, ...newRemarks };
+        try {
+          localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+        } catch (e) {}
+        return merged;
+      });
+    }, (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'remarks');
+    });
 
     return () => {
       isMounted = false;
-      es?.close();
-      clearTimeout(reconnectTimer);
-      clearInterval(pollTimer);
+      unsubDashboard();
+      unsubRemarks();
     };
+  }, []);
+
+  // Auto-recover from localStorage (only if Firestore fails/takes too long)
+  useEffect(() => {
+    try {
+      const savedData = localStorage.getItem('production_dashboard_data');
+      if (savedData && !data) {
+        setData(JSON.parse(savedData));
+      }
+      const savedRemarks = localStorage.getItem('production_dashboard_remarks');
+      if (savedRemarks) {
+        setRemarks(prev => ({ ...JSON.parse(savedRemarks), ...prev }));
+      }
+    } catch (e) {}
   }, []);
 
   const handleRemarkChange = async (id: string, text: string) => {
     const updated = Date.now();
-    let nextRemarks: Record<string, { text: string; updatedAt: number | null }> = {};
-    setRemarks(prev => {
-      nextRemarks = { ...prev, [id]: { text, updatedAt: updated } };
-      try {
-        localStorage.setItem('production_dashboard_remarks', JSON.stringify(nextRemarks));
-      } catch (e) {}
-      return nextRemarks;
-    });
+    const remarkData = { text, updatedAt: updated };
+    
+    // Update local state immediately
+    setRemarks(prev => ({ ...prev, [id]: remarkData }));
 
-    // Send to Server API
+    // Persist to Firestore
     try {
-      await fetch('/api/remarks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, text, updatedAt: updated })
-      });
-    } catch (e) {}
+      await setDoc(doc(db, 'remarks', id), remarkData);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `remarks/${id}`);
+    }
   };
 
-  const persistDashboardData = (parsedData: ProductionOrder[]) => {
+  const persistDashboardData = async (parsedData: ProductionOrder[]) => {
     setLoadingState('idle');
     setUploadProgress({ current: 0, total: 0 });
 
@@ -714,16 +599,16 @@ export function Dashboard() {
       localStorage.setItem('production_dashboard_data', JSON.stringify(parsedData));
     } catch (e) {}
 
-    // 2. Send to Central Express Server
-    fetch('/api/dashboard', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        data: parsedData,
+    // 2. Persist to Firestore
+    try {
+      await setDoc(doc(db, 'dashboardData', 'main'), {
+        orders: parsedData,
         lastUpdated: now,
         uploadId: uploadId
-      })
-    }).catch(() => {});
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'dashboardData/main');
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1167,10 +1052,6 @@ export function Dashboard() {
     return { completedScheduleLines, pendingScheduleLines, completedVPOs, pendingVPOs };
   }, [filteredItems]);
 
-  const [showSewOutReport, setShowSewOutReport] = useState(false);
-  const [showPrintModal, setShowPrintModal] = useState(false);
-  const [reportInitialMode, setReportInitialMode] = useState<'sewout_50_100' | 'all'>('all');
-
   const handleExportExcel = useCallback(() => {
     if (filteredItems.length === 0) return;
 
@@ -1274,10 +1155,10 @@ export function Dashboard() {
                   isDragging ? 'border-indigo-500 bg-indigo-50/70' : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'
                 }`}
                 onClick={() => fileInputRef.current?.click()}
-                onDragOver={handleDragOver}
-                onDragEnter={handleDragEnter}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
+                onDragOver={(e) => handleDragOver(e)}
+                onDragEnter={(e) => handleDragEnter(e)}
+                onDragLeave={(e) => handleDragLeave(e)}
+                onDrop={(e) => handleDrop(e)}
               >
                 <UploadCloud className={`w-8 h-8 mx-auto mb-3 pointer-events-none transition-colors ${isDragging ? 'text-indigo-500' : 'text-slate-400'}`} />
                 <p className="text-sm font-medium text-slate-700 mb-1 pointer-events-none">Click to upload or drag and drop</p>
