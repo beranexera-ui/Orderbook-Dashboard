@@ -513,9 +513,39 @@ export function Dashboard() {
     testConnection();
   }, []);
 
-  // 2. Real-time Sync from Firestore
+  // 2. Real-time Sync from Firestore with Server Fallback
   useEffect(() => {
     let isMounted = true;
+
+    // Load from Server API as immediate fallback/init
+    const loadFromApi = async () => {
+      try {
+        const res = await fetch('/api/dashboard');
+        if (res.ok) {
+          const dash = await res.json();
+          if (dash?.data && Array.isArray(dash.data) && dash.data.length > 0) {
+            if (isMounted) {
+              setData(prev => (prev && prev.length > 0 ? prev : dash.data));
+              if (dash.lastUpdated) setLastUpdated(dash.lastUpdated);
+            }
+          }
+        }
+      } catch (e) {}
+
+      try {
+        const remRes = await fetch('/api/remarks');
+        if (remRes.ok) {
+          const remData = await remRes.json();
+          if (remData && typeof remData === 'object' && Object.keys(remData).length > 0) {
+            if (isMounted) {
+              setRemarks(prev => ({ ...remData, ...prev }));
+            }
+          }
+        }
+      } catch (e) {}
+    };
+
+    loadFromApi();
 
     const unsubDashboard = onSnapshot(doc(db, 'dashboardData', 'main'), (snap) => {
       if (snap.exists()) {
@@ -530,9 +560,8 @@ export function Dashboard() {
       }
     }, (err) => {
       if (err.message.includes('Quota exceeded')) {
-        setError("Quota exceeded. Sync paused.");
+        setError("Firestore quota exceeded. Using local server backup.");
       }
-      handleFirestoreError(err, OperationType.GET, 'dashboardData/main');
     });
 
     const unsubRemarks = onSnapshot(collection(db, 'remarks'), (snap) => {
@@ -548,26 +577,88 @@ export function Dashboard() {
         return merged;
       });
     }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'remarks');
+      console.warn('Remarks sync error:', err);
     });
+
+    // Also listen to Server SSE for instant sync when Firestore is down
+    const es = new EventSource('/api/realtime');
+    es.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'dashboard') {
+          if (Array.isArray(msg.data)) {
+            setData(msg.data);
+            if (msg.lastUpdated) setLastUpdated(msg.lastUpdated);
+          }
+        } else if (msg.type === 'remark') {
+          if (msg.id) {
+            setRemarks(prev => ({ ...prev, [msg.id]: { text: msg.text, updatedAt: msg.updatedAt } }));
+          }
+        } else if (msg.type === 'remarks_batch') {
+          if (msg.remarks) setRemarks(prev => ({ ...prev, ...msg.remarks }));
+        }
+      } catch (e) {}
+    };
 
     return () => {
       isMounted = false;
       unsubDashboard();
       unsubRemarks();
+      es.close();
     };
   }, []);
 
   // Auto-recover from localStorage (only if Firestore fails/takes too long)
   useEffect(() => {
     try {
-      const savedData = localStorage.getItem('production_dashboard_data');
-      if (savedData && !data) {
-        setData(JSON.parse(savedData));
+      const dataKeys = ['production_dashboard_data', 'production_data', 'dashboard_data', 'orders_data', 'excel_data'];
+      const remarkKeys = ['production_dashboard_remarks', 'remarks', 'app_remarks'];
+
+      let recoveredData: ProductionOrder[] | null = null;
+      for (const k of dataKeys) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          try {
+            const p = JSON.parse(val);
+            if (Array.isArray(p) && p.length > 0) {
+              recoveredData = p;
+              break;
+            }
+          } catch (e) {}
+        }
       }
-      const savedRemarks = localStorage.getItem('production_dashboard_remarks');
-      if (savedRemarks) {
-        setRemarks(prev => ({ ...JSON.parse(savedRemarks), ...prev }));
+
+      let recoveredRemarks: Record<string, { text: string; updatedAt: number | null }> = {};
+      for (const k of remarkKeys) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          try {
+            const p = JSON.parse(val);
+            if (p && typeof p === 'object') {
+              recoveredRemarks = { ...recoveredRemarks, ...p };
+            }
+          } catch (e) {}
+        }
+      }
+
+      if (recoveredData) {
+        setData(prev => (prev && prev.length > 0) ? prev : recoveredData);
+        // Sync to server backup if state was empty
+        fetch('/api/dashboard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: recoveredData, lastUpdated: Date.now(), uploadId: 'local_recovery' })
+        }).catch(() => {});
+      }
+
+      if (Object.keys(recoveredRemarks).length > 0) {
+        setRemarks(prev => ({ ...recoveredRemarks, ...prev }));
+        // Sync to server backup
+        fetch('/api/remarks/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remarks: recoveredRemarks })
+        }).catch(() => {});
       }
     } catch (e) {}
   }, []);
@@ -576,15 +667,30 @@ export function Dashboard() {
     const updated = Date.now();
     const remarkData = { text, updatedAt: updated };
     
-    // Update local state immediately
-    setRemarks(prev => ({ ...prev, [id]: remarkData }));
+    // 1. Update local state immediately
+    setRemarks(prev => {
+      const next = { ...prev, [id]: remarkData };
+      try {
+        localStorage.setItem('production_dashboard_remarks', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
 
-    // Persist to Firestore
+    // 2. Persist to Firestore (Primary)
     try {
       await setDoc(doc(db, 'remarks', id), remarkData);
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `remarks/${id}`);
+      console.warn('Firestore Save Failed (Quota?), using local fallback:', err);
     }
+
+    // 3. Persist to Server API (Backup & Sync fallback)
+    try {
+      await fetch('/api/remarks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, text, updatedAt: updated })
+      });
+    } catch (e) {}
   };
 
   const persistDashboardData = async (parsedData: ProductionOrder[]) => {
@@ -599,7 +705,16 @@ export function Dashboard() {
       localStorage.setItem('production_dashboard_data', JSON.stringify(parsedData));
     } catch (e) {}
 
-    // 2. Persist to Firestore
+    // 2. Persist to Server API (Immediate Backup)
+    try {
+      await fetch('/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: parsedData, lastUpdated: now, uploadId })
+      });
+    } catch (e) {}
+
+    // 3. Persist to Firestore (Primary)
     try {
       await setDoc(doc(db, 'dashboardData', 'main'), {
         orders: parsedData,
@@ -607,7 +722,7 @@ export function Dashboard() {
         uploadId: uploadId
       });
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'dashboardData/main');
+      console.warn('Firestore Save Failed (Quota?), using local fallback:', err);
     }
   };
 
