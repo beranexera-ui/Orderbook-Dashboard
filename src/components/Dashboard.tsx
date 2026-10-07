@@ -418,9 +418,9 @@ export function Dashboard() {
         }
       }
 
-      // Commit batches in parallel chunks of 5 for extreme speed
+      // Commit batches with high parallelism
       let processed = 0;
-      const parallelChunkSize = 5;
+      const parallelChunkSize = 8; // Increased for faster upload
       for (let i = 0; i < batches.length; i += parallelChunkSize) {
         const chunk = batches.slice(i, i + parallelChunkSize);
         await Promise.all(chunk.map(b => b.batch.commit()));
@@ -436,12 +436,9 @@ export function Dashboard() {
     } catch (err) {
       console.error(err);
       alert("Failed to upload data to database.");
-      setLoadingState('idle');
     } finally {
-      setTimeout(() => {
-        setLoadingState('idle');
-        setUploadProgress({ current: 0, total: 0 });
-      }, 500);
+      setLoadingState('idle');
+      setUploadProgress({ current: 0, total: 0 });
     }
   };
 
@@ -475,78 +472,72 @@ export function Dashboard() {
             return;
           }
 
-          // Precompute normalized column map for O(1) lookup
-          const columnKeyMap: Record<string, string> = {};
-          if (jsonData.length > 0 && typeof jsonData[0] === 'object' && jsonData[0] !== null) {
-            Object.keys(jsonData[0]).forEach(key => {
-              columnKeyMap[key.toLowerCase().replace(/\s+/g, '')] = key;
-            });
-          }
+            // Precompute normalized column map for O(1) lookup
+            const columnKeyMap: Record<string, string> = {};
+            if (jsonData.length > 0 && typeof jsonData[0] === 'object' && jsonData[0] !== null) {
+              Object.keys(jsonData[0]).forEach(key => {
+                columnKeyMap[key.toLowerCase().replace(/\s+/g, '')] = key;
+              });
+            }
 
-          const getVal = (row: any, searchKeys: string[]) => {
-            for (const searchKey of searchKeys) {
-              const normSearchKey = searchKey.toLowerCase().replace(/\s+/g, '');
-              const actualKey = columnKeyMap[normSearchKey];
-              if (actualKey && row[actualKey] !== undefined) {
-                return row[actualKey];
+            const getVal = (row: any, searchKeys: string[]) => {
+              for (const searchKey of searchKeys) {
+                const normSearchKey = searchKey.toLowerCase().replace(/\s+/g, '');
+                const actualKey = columnKeyMap[normSearchKey];
+                if (actualKey && row[actualKey] !== undefined) {
+                  return row[actualKey];
+                }
               }
-            }
-            for (const searchKey of searchKeys) {
-              if (row[searchKey] !== undefined) return row[searchKey];
-            }
-            return undefined;
-          };
+              return undefined;
+            };
 
-          const getNum = (row: any, searchKeys: string[]) => {
-            const val = getVal(row, searchKeys);
-            if (val == null || val === '') return 0;
-            if (typeof val === 'number') return val;
-            const parsed = Number(String(val).replace(/,/g, ''));
-            return isNaN(parsed) ? 0 : parsed;
-          };
+            const getNum = (row: any, searchKeys: string[]) => {
+              const val = getVal(row, searchKeys);
+              if (val == null || val === '') return 0;
+              if (typeof val === 'number') return val;
+              const parsed = Number(String(val).replace(/,/g, ''));
+              return isNaN(parsed) ? 0 : parsed;
+            };
 
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          
-          const dayOfWeek = today.getDay();
-          const diffToMonday = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-          const startOfCurrentWeek = new Date(today);
-          startOfCurrentWeek.setDate(diffToMonday);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const startOfCurrentWeekTime = (today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1));
+            const startOfCurrentWeek = new Date(today);
+            startOfCurrentWeek.setDate(startOfCurrentWeekTime);
 
-          const endOf6Weeks = new Date(startOfCurrentWeek);
-          endOf6Weeks.setDate(startOfCurrentWeek.getDate() + 42);
-          
-          const excludedTerms = [
-            'SIZE SET', 'BLACK SEAL', 'SAMPLES_PRESETTING', 'SAMPLES_PP', 'PP_SAMPLE',
-            'MTL SAMPLE', 'PP SAMPLE', 'PP SAMPLE PRNT', 'PRE SETTING', 'SAMPLE PP',
-            'WASH & TOP', 'PPZ', 'TC-PP', 'TC-PPZ', 'MTL', 'TLT'
-          ];
-
-          const filteredData = jsonData.filter((row: any) => {
-            const warehouse = String(row['Prod Warehouse'] || '').trim().toUpperCase();
-            const isERK = warehouse === 'ERK';
+            const endOf6WeeksTime = startOfCurrentWeek.getTime() + (42 * 24 * 60 * 60 * 1000);
             
-            const rawPlanDelDate = String(row['Plan Del Date'] || row['Plan Del Date '] || '').trim();
-            let isWithin6Weeks = false;
-            
-            if (rawPlanDelDate.length === 8) {
-              const year = parseInt(rawPlanDelDate.substring(0, 4));
-              const month = parseInt(rawPlanDelDate.substring(4, 6)) - 1;
-              const dayNum = parseInt(rawPlanDelDate.substring(6, 8));
-              const rowDate = new Date(year, month, dayNum);
+            const excludedTerms = [
+              'SIZE SET', 'BLACK SEAL', 'SAMPLES_PRESETTING', 'SAMPLES_PP', 'PP_SAMPLE',
+              'MTL SAMPLE', 'PP SAMPLE', 'PP SAMPLE PRNT', 'PRE SETTING', 'SAMPLE PP',
+              'WASH & TOP', 'PPZ', 'TC-PP', 'TC-PPZ', 'MTL', 'TLT'
+            ];
+            const excludedSet = new Set(excludedTerms);
+
+            const filteredData = jsonData.filter((row: any) => {
+              const warehouseVal = getVal(row, ['Prod Warehouse']);
+              const isERK = String(warehouseVal || '').trim().toUpperCase() === 'ERK';
               
-              isWithin6Weeks = rowDate >= startOfCurrentWeek && rowDate < endOf6Weeks;
-            }
-            
-            const hasExcludedTerm = Object.values(row).some(val => {
-              const strVal = String(val).trim().toUpperCase();
-              if (excludedTerms.includes(strVal)) return true;
-              if (/^VPO(_|\d)/.test(strVal)) return true;
-              return false;
+              const rawPlanDelDate = String(getVal(row, ['Plan Del Date']) || '').trim();
+              let isWithin6Weeks = false;
+              
+              if (rawPlanDelDate.length === 8) {
+                const year = parseInt(rawPlanDelDate.substring(0, 4));
+                const month = parseInt(rawPlanDelDate.substring(4, 6)) - 1;
+                const dayNum = parseInt(rawPlanDelDate.substring(6, 8));
+                const rowTime = new Date(year, month, dayNum).getTime();
+                isWithin6Weeks = rowTime >= startOfCurrentWeek.getTime() && rowTime < endOf6WeeksTime;
+              }
+              
+              const hasExcludedTerm = Object.values(row).some(val => {
+                const strVal = String(val).trim().toUpperCase();
+                if (excludedSet.has(strVal)) return true;
+                if (strVal.startsWith('VPO_')) return true;
+                return false;
+              });
+              
+              return isERK && isWithin6Weeks && !hasExcludedTerm;
             });
-            
-            return isERK && isWithin6Weeks && !hasExcludedTerm;
-          });
 
           if (filteredData.length === 0) {
             setError(`No data found for Prod Warehouse "ERK" within the 6-week window starting this week.`);
@@ -586,15 +577,15 @@ export function Dashboard() {
               statusText = `Pending - ${pendingQty}`;
             }
 
-            const vpoStr = String(getVal(row, ['VPO No', 'vpo no']) || '').trim();
-            const schedStr = String(getVal(row, ['Schedule No', 'schedule no']) || '').trim();
-            const styleStr = String(getVal(row, ['Style No', 'style no']) || '').trim();
-            const colorStr = String(getVal(row, ['Color Code', 'color code']) || '').trim();
-            const destStr = String(getVal(row, ['Destination', 'destination']) || '').trim();
+            const vpoStr = String(getVal(row, ['VPO No']) || '').trim();
+            const schedStr = String(getVal(row, ['Schedule No']) || '').trim();
+            const styleStr = String(getVal(row, ['Style No']) || '').trim();
+            const colorStr = String(getVal(row, ['Color Code']) || '').trim();
+            const destStr = String(getVal(row, ['Destination']) || '').trim();
             
-            // Create a safe, stable ID for Firestore (excluding mutable dates)
-            const legacyIdStr = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}_${planDelDate}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+            // Create a safe, stable ID for Firestore
             const stableId = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+            const legacyIdStr = `${stableId}_${planDelDate.replace(/[\/]/g, '-')}`;
             
             // Fallback to index if fields are empty to prevent overwriting
             const finalId = (stableId === '_____' || !stableId) ? `row_${index}` : stableId;
@@ -949,13 +940,6 @@ export function Dashboard() {
                 <UploadCloud className={`w-8 h-8 mx-auto mb-3 ${isDragging ? 'text-indigo-500' : 'text-slate-400'}`} />
                 <p className="text-sm font-medium text-slate-700 mb-1">Click to upload or drag and drop</p>
                 <p className="text-xs text-slate-500">XLSX, XLS, or CSV files</p>
-                <input 
-                  type="file" 
-                  className="hidden" 
-                  ref={fileInputRef} 
-                  accept=".xlsx, .xls, .csv" 
-                  onChange={handleFileUpload} 
-                />
               </div>
             </>
           )}
@@ -971,6 +955,14 @@ export function Dashboard() {
           <option key={idx} value={remark} />
         ))}
       </datalist>
+
+      <input 
+        type="file" 
+        className="hidden" 
+        ref={fileInputRef} 
+        accept=".xlsx, .xls, .csv" 
+        onChange={handleFileUpload} 
+      />
 
       <div className="mx-auto space-y-6" style={{ maxWidth: '1600px' }}>
         
@@ -1031,12 +1023,12 @@ export function Dashboard() {
                 Analysis
               </button>
               <button 
-                onClick={() => setData(null)}
+                onClick={() => fileInputRef.current?.click()}
                 disabled={loadingState !== 'idle'}
                 className="flex-1 sm:flex-none inline-flex items-center justify-center px-4 py-2.5 bg-slate-900 text-white rounded-lg text-xs md:text-sm font-medium hover:bg-slate-800 shadow-sm transition-all focus:ring-2 focus:ring-slate-900/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
               >
                 {loadingState !== 'idle' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UploadCloud className="w-4 h-4 mr-2" />}
-                {loadingState !== 'idle' ? "..." : "Upload"}
+                {loadingState === 'uploading' ? `${Math.round((uploadProgress.current / uploadProgress.total) * 100)}%` : loadingState !== 'idle' ? "..." : "Upload"}
               </button>
             </div>
           </div>
