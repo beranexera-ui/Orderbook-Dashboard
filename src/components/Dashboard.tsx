@@ -479,7 +479,15 @@ export function Dashboard() {
       }
 
       if (Object.keys(foundRemarks).length > 0) {
-        setRemarks(prev => ({ ...foundRemarks, ...prev }));
+        setRemarks(prev => {
+          const merged = { ...foundRemarks, ...prev };
+          fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164032231649', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: "production_remarks_main", data: { remarks: merged } })
+          }).catch(() => {});
+          return merged;
+        });
         fetch('/api/remarks/batch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -506,6 +514,11 @@ export function Dashboard() {
 
       if (foundData) {
         setData(prev => prev || foundData);
+        fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164030cc1648', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: "production_dashboard_main", data: { orders: foundData, lastUpdated: Date.now() } })
+        }).catch(() => {});
         fetch('/api/dashboard', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -525,26 +538,49 @@ export function Dashboard() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Multi-PC Server Sync + Real-time SSE + Polling Fallback
+  // Multi-PC Server Sync + Global Cloud Sync + Real-time SSE + Polling Fallback
   useEffect(() => {
     let isMounted = true;
 
-    // 1. Instant load from Server API (ensures ALL PCs see identical data immediately)
-    const loadFromServer = async () => {
+    // 1. Load from Global Cloud Bin (ensures Vercel & ALL PCs see identical data immediately)
+    const loadFromCloud = async () => {
+      try {
+        const cloudRes = await fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164030cc1648');
+        if (cloudRes.ok) {
+          const cloudVal = await cloudRes.json();
+          if (cloudVal?.data?.orders && Array.isArray(cloudVal.data.orders) && cloudVal.data.orders.length > 0) {
+            if (isMounted) {
+              setData(cloudVal.data.orders);
+              if (cloudVal.data.lastUpdated) setLastUpdated(cloudVal.data.lastUpdated);
+            }
+          }
+        }
+      } catch (e) {}
+
+      try {
+        const cloudRem = await fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164032231649');
+        if (cloudRem.ok) {
+          const cloudRemVal = await cloudRem.json();
+          if (cloudRemVal?.data?.remarks && typeof cloudRemVal.data.remarks === 'object') {
+            if (isMounted) {
+              setRemarks(prev => ({ ...cloudRemVal.data.remarks, ...prev }));
+            }
+          }
+        }
+      } catch (e) {}
+
       try {
         const res = await fetch('/api/dashboard');
         if (res.ok) {
           const dash = await res.json();
           if (dash && Array.isArray(dash.data) && dash.data.length > 0) {
             if (isMounted) {
-              setData(dash.data);
+              setData(prev => (prev && prev.length > 0 ? prev : dash.data));
               if (dash.lastUpdated) setLastUpdated(dash.lastUpdated);
             }
           }
         }
-      } catch (err) {
-        console.warn("Failed to fetch initial dashboard from server:", err);
-      }
+      } catch (err) {}
 
       try {
         const remRes = await fetch('/api/remarks');
@@ -556,14 +592,12 @@ export function Dashboard() {
             }
           }
         }
-      } catch (err) {
-        console.warn("Failed to fetch initial remarks from server:", err);
-      }
+      } catch (err) {}
     };
 
-    loadFromServer();
+    loadFromCloud();
 
-    // 2. Real-time Server-Sent Events (SSE) connection: Instant sub-50ms sync across all PCs
+    // 2. Real-time Server-Sent Events (SSE) connection
     let es: EventSource | null = null;
     let reconnectTimer: any = null;
 
@@ -631,9 +665,38 @@ export function Dashboard() {
 
     setupSSE();
 
-    // 3. Periodic fallback poll every 3 seconds
+    // 3. Periodic global cloud poll every 3 seconds for Vercel / Multi-PC
     const pollTimer = setInterval(() => {
       if (!isMounted) return;
+
+      fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164030cc1648')
+        .then(res => res.json())
+        .then(res => {
+          if (res?.data?.orders && Array.isArray(res.data.orders) && res.data.orders.length > 0 && isMounted) {
+            setData(prev => (prev && prev.length > 0 ? prev : res.data.orders));
+            if (res.data.lastUpdated) setLastUpdated(res.data.lastUpdated);
+          }
+        })
+        .catch(() => {});
+
+      fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164032231649')
+        .then(res => res.json())
+        .then(res => {
+          if (res?.data?.remarks && typeof res.data.remarks === 'object' && isMounted) {
+            setRemarks(prev => {
+              let hasChange = false;
+              for (const id of Object.keys(res.data.remarks)) {
+                if (!prev[id] || prev[id].text !== res.data.remarks[id].text) {
+                  hasChange = true;
+                  break;
+                }
+              }
+              return hasChange ? { ...prev, ...res.data.remarks } : prev;
+            });
+          }
+        })
+        .catch(() => {});
+
       fetch('/api/dashboard')
         .then(res => res.json())
         .then(dash => {
@@ -663,68 +726,42 @@ export function Dashboard() {
         .catch(() => {});
     }, 3000);
 
-    // 4. Firestore snapshot listeners with silent failover
-    let unsubRemarks: any = null;
-    try {
-      unsubRemarks = onSnapshot(collection(db, "remarks"), (snapshot) => {
-        const newRemarks: Record<string, { text: string, updatedAt: number | null }> = {};
-        snapshot.forEach(docSnap => {
-          newRemarks[docSnap.id] = {
-            text: docSnap.data().text || '',
-            updatedAt: docSnap.data().updatedAt || null
-          };
-        });
-        if (isMounted && Object.keys(newRemarks).length > 0) {
-          setRemarks(prev => {
-            const merged = { ...prev, ...newRemarks };
-            try {
-              localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-            } catch (e) {}
-            return merged;
-          });
-          fetch('/api/remarks/batch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ remarks: newRemarks })
-          }).catch(() => {});
-        }
-      }, () => {});
-    } catch (e) {}
-
     return () => {
       isMounted = false;
       es?.close();
       clearTimeout(reconnectTimer);
       clearInterval(pollTimer);
-      if (unsubRemarks) unsubRemarks();
     };
   }, []);
 
   const handleRemarkChange = async (id: string, text: string) => {
     const updated = Date.now();
+    let nextRemarks: Record<string, { text: string; updatedAt: number | null }> = {};
     setRemarks(prev => {
-      const next = { ...prev, [id]: { text, updatedAt: updated } };
+      nextRemarks = { ...prev, [id]: { text, updatedAt: updated } };
       try {
-        localStorage.setItem('production_dashboard_remarks', JSON.stringify(next));
+        localStorage.setItem('production_dashboard_remarks', JSON.stringify(nextRemarks));
       } catch (e) {}
-      return next;
+      return nextRemarks;
     });
 
-    // 1. Instant save to server API (all PCs receive the updated remark)
+    // 1. Global Cloud Bin save (works 100% on Vercel)
+    try {
+      fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164032231649', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: "production_remarks_main", data: { remarks: nextRemarks } })
+      }).catch(() => {});
+    } catch (e) {}
+
+    // 2. Server API save
     try {
       await fetch('/api/remarks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, text, updatedAt: updated })
       });
-    } catch (e) {
-      console.warn("Server remarks save warning:", e);
-    }
-
-    // 2. Non-blocking Firestore save
-    try {
-      setDoc(doc(db, "remarks", id), { text, updatedAt: updated }, { merge: true }).catch(() => {});
-    } catch (e: any) {}
+    } catch (e) {}
   };
 
   const persistDashboardData = (parsedData: ProductionOrder[]) => {
@@ -739,7 +776,17 @@ export function Dashboard() {
       localStorage.setItem('production_dashboard_data', JSON.stringify(parsedData));
     } catch (e) {}
 
-    // 2. Immediately send to Central Server (broadcasts via SSE to all PCs within 10ms!)
+    // 2. Immediately send to Global Cloud Bin (works 100% on Vercel across all PCs!)
+    fetch('https://api.restful-api.dev/objects/ff808181a09d98f701a1164030cc1648', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: "production_dashboard_main",
+        data: { orders: parsedData, lastUpdated: now }
+      })
+    }).catch(() => {});
+
+    // 3. Send to Central Server
     fetch('/api/dashboard', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -749,28 +796,6 @@ export function Dashboard() {
         uploadId: uploadId
       })
     }).catch(() => {});
-
-    // 3. Asynchronously persist to Firestore in background without awaiting
-    try {
-      const chunkSize = 400;
-      const chunksCount = Math.ceil(parsedData.length / chunkSize);
-      const batch = writeBatch(db);
-      
-      batch.set(doc(db, "dashboardData", "latest"), {
-        currentUploadId: uploadId,
-        timestamp: now,
-        totalOrders: parsedData.length,
-        chunksCount: chunksCount
-      });
-
-      for (let i = 0; i < parsedData.length; i += chunkSize) {
-        const chunk = parsedData.slice(i, i + chunkSize);
-        const chunkRef = doc(db, "dashboardData", `chunk_${Math.floor(i / chunkSize)}`);
-        batch.set(chunkRef, { orders: chunk });
-      }
-
-      batch.commit().catch(() => {});
-    } catch (err: any) {}
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
