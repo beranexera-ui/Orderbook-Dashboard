@@ -1094,13 +1094,13 @@ export function Dashboard() {
                 Powered by DILEEPA WICKRAMASINGHE
               </span>
             </div>
-            <p className="text-slate-500 mt-1 text-xs md:text-sm flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+            <p className="text-slate-500 mt-1 text-xs md:text-sm flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 flex-wrap">
               <span>Item-level fulfillment details for the next 6 weeks.</span>
               {lastUpdated && (
-                <span className="text-slate-600 font-medium flex items-center gap-1.5 truncate">
+                <span className="text-slate-600 font-medium inline-flex items-center gap-1.5 whitespace-nowrap">
                   <span className="hidden sm:inline text-slate-300">•</span>
                   <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" /> 
-                  OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+                  <span>OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</span>
                 </span>
               )}
             </p>
