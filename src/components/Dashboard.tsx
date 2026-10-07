@@ -3,7 +3,7 @@ import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { db } from '../firebase';
-import { doc, setDoc, onSnapshot, writeBatch, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, getDocFromCache, setDoc, onSnapshot, writeBatch, collection, getDocs, getDocsFromCache } from 'firebase/firestore';
 import { KPIView } from './KPIView';
 import { SewOutReportModal } from './SewOutReportModal';
 import { PrintOrientationModal } from './PrintOrientationModal';
@@ -401,6 +401,45 @@ export function Dashboard() {
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
 
+  // Auto-recover remarks and dashboard data from localStorage backup
+  useEffect(() => {
+    try {
+      const localRemarks = localStorage.getItem('production_dashboard_remarks');
+      if (localRemarks) {
+        const parsed = JSON.parse(localRemarks);
+        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+          setRemarks(prev => ({ ...parsed, ...prev }));
+          fetch('/api/remarks/batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ remarks: parsed })
+          }).catch(() => {});
+        }
+      }
+    } catch (e) {}
+
+    try {
+      const localData = localStorage.getItem('production_dashboard_data');
+      if (localData) {
+        const parsed = JSON.parse(localData);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const windowBounds = getSixWeeksWindow();
+          const filtered = parsed.filter((item: ProductionOrder) =>
+            isDateWithinSixWeeks(parseExcelDate(item.planDelDate), item.weekNo, windowBounds)
+          );
+          if (filtered.length > 0) {
+            setData(prev => prev || filtered);
+            fetch('/api/dashboard', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ data: filtered, lastUpdated: Date.now(), uploadId: 'local_storage' })
+            }).catch(() => {});
+          }
+        }
+      }
+    } catch (e) {}
+  }, []);
+
   useEffect(() => {
     lastUpdatedRef.current = lastUpdated;
   }, [lastUpdated]);
@@ -455,7 +494,7 @@ export function Dashboard() {
 
     loadFromServer();
 
-    // 2. Poll server every 8 seconds for multi-PC real-time sync without burning Firestore quota
+    // 2. Poll server every 3 seconds for instant multi-PC real-time sync
     const pollTimer = setInterval(async () => {
       try {
         const res = await fetch('/api/dashboard');
@@ -479,16 +518,22 @@ export function Dashboard() {
           const remData = await remRes.json();
           if (remData && typeof remData === 'object' && Object.keys(remData).length > 0) {
             if (isMounted) {
-              setRemarks(prev => ({ ...prev, ...remData }));
+              setRemarks(prev => {
+                const merged = { ...prev, ...remData };
+                try {
+                  localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+                } catch (e) {}
+                return merged;
+              });
             }
           }
         }
       } catch (e) {
         // silent polling catch
       }
-    }, 8000);
+    }, 3000);
 
-    // 3. Firestore snapshot listeners with graceful quota error handling
+    // 3. Firestore snapshot listeners with graceful quota error handling and IndexedDB cache fallback
     const unsubRemarks = onSnapshot(collection(db, "remarks"), (snapshot) => {
       const newRemarks: Record<string, { text: string, updatedAt: number | null }> = {};
       snapshot.forEach(docSnap => {
@@ -498,7 +543,13 @@ export function Dashboard() {
         };
       });
       if (isMounted && Object.keys(newRemarks).length > 0) {
-        setRemarks(prev => ({ ...prev, ...newRemarks }));
+        setRemarks(prev => {
+          const merged = { ...prev, ...newRemarks };
+          try {
+            localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
         // Sync to server backup
         fetch('/api/remarks/batch', {
           method: 'POST',
@@ -506,10 +557,35 @@ export function Dashboard() {
           body: JSON.stringify({ remarks: newRemarks })
         }).catch(() => {});
       }
-    }, (error) => {
+    }, async (error) => {
       console.warn("Remarks snapshot warning:", error.message);
       if (error?.message?.includes('Quota') || (error as any)?.code === 'resource-exhausted') {
         if (isMounted) setQuotaNotice(true);
+        // Try reading remarks from IndexedDB offline persistence cache
+        try {
+          const cachedSnap = await getDocsFromCache(collection(db, "remarks"));
+          const cachedRemarks: Record<string, { text: string, updatedAt: number | null }> = {};
+          cachedSnap.forEach(d => {
+            cachedRemarks[d.id] = {
+              text: d.data().text || '',
+              updatedAt: d.data().updatedAt || null
+            };
+          });
+          if (isMounted && Object.keys(cachedRemarks).length > 0) {
+            setRemarks(prev => {
+              const merged = { ...cachedRemarks, ...prev };
+              try {
+                localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+              } catch (e) {}
+              return merged;
+            });
+            fetch('/api/remarks/batch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ remarks: cachedRemarks })
+            }).catch(() => {});
+          }
+        } catch (cErr) {}
       }
     });
 
@@ -525,8 +601,26 @@ export function Dashboard() {
           try {
             const allOrders: ProductionOrder[] = [];
             for (let i = 0; i < chunksCount; i++) {
-              const chunkDoc = await doc(db, "dashboardData", `chunk_${i}`);
-              // we can fetch chunk
+              const chunkSnap = await getDoc(doc(db, "dashboardData", `chunk_${i}`));
+              if (chunkSnap.exists()) {
+                const chunkData = chunkSnap.data()?.orders;
+                if (Array.isArray(chunkData)) {
+                  allOrders.push(...chunkData);
+                }
+              }
+            }
+            if (isMounted && allOrders.length > 0) {
+              const filtered6Weeks = allOrders.filter((item: ProductionOrder) =>
+                isDateWithinSixWeeks(parseExcelDate(item.planDelDate), item.weekNo, windowBounds)
+              );
+              filtered6Weeks.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
+              setData(filtered6Weeks);
+              // sync to server
+              fetch('/api/dashboard', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data: filtered6Weeks, lastUpdated: timestamp, uploadId: currentUploadId })
+              }).catch(() => {});
             }
           } catch (e) {}
         } else if (currentUploadId) {
@@ -574,10 +668,37 @@ export function Dashboard() {
         }
       }
       if (isMounted) setLoadingInitial(false);
-    }, (error) => {
+    }, async (error) => {
       console.warn("Dashboard snapshot warning:", error.message);
       if (error?.message?.includes('Quota') || (error as any)?.code === 'resource-exhausted') {
         if (isMounted) setQuotaNotice(true);
+        // Try reading latest from offline IndexedDB cache
+        try {
+          const cachedLatest = await getDocFromCache(doc(db, "dashboardData", "latest"));
+          if (cachedLatest.exists()) {
+            const { currentUploadId, chunksCount } = cachedLatest.data();
+            if (chunksCount && typeof chunksCount === 'number' && chunksCount > 0) {
+              const allOrders: ProductionOrder[] = [];
+              for (let i = 0; i < chunksCount; i++) {
+                const chunkSnap = await getDocFromCache(doc(db, "dashboardData", `chunk_${i}`));
+                if (chunkSnap.exists()) {
+                  const orders = chunkSnap.data()?.orders;
+                  if (Array.isArray(orders)) allOrders.push(...orders);
+                }
+              }
+              if (isMounted && allOrders.length > 0) {
+                const filtered = allOrders.filter(o => isDateWithinSixWeeks(parseExcelDate(o.planDelDate), o.weekNo, windowBounds));
+                filtered.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
+                setData(filtered);
+                fetch('/api/dashboard', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ data: filtered, lastUpdated: Date.now(), uploadId: currentUploadId })
+                }).catch(() => {});
+              }
+            }
+          }
+        } catch (cErr) {}
       }
       if (isMounted) setLoadingInitial(false);
     });
@@ -592,7 +713,13 @@ export function Dashboard() {
 
   const handleRemarkChange = async (id: string, text: string) => {
     const updated = Date.now();
-    setRemarks(prev => ({ ...prev, [id]: { text, updatedAt: updated } }));
+    setRemarks(prev => {
+      const next = { ...prev, [id]: { text, updatedAt: updated } };
+      try {
+        localStorage.setItem('production_dashboard_remarks', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
 
     // 1. Instant save to server API (all PCs receive the updated remark)
     try {
@@ -624,6 +751,10 @@ export function Dashboard() {
     const uploadId = now.toString();
 
     // 1. Immediately post to Server API for instant 100% sync to all connected PCs
+    try {
+      localStorage.setItem('production_dashboard_data', JSON.stringify(parsedData));
+    } catch (e) {}
+
     try {
       await fetch('/api/dashboard', {
         method: 'POST',
@@ -696,6 +827,7 @@ export function Dashboard() {
 
           if (jsonData.length === 0) {
             setError("The uploaded file appears to be empty.");
+            setLoadingState('idle');
             return;
           }
 
@@ -730,8 +862,11 @@ export function Dashboard() {
 
           if (filteredData.length === 0) {
             setError(`No data found for Prod Warehouse "ERK" within the 6-week window starting this week.`);
+            setLoadingState('idle');
             return;
           }
+
+          const excelExtractedRemarks: Record<string, { text: string; updatedAt: number }> = {};
 
           const parsedData: ProductionOrder[] = filteredData.map((row: any, index: number) => {
             const rawPlanDelDate = getVal(row, ['Plan Del Date', 'Plan Del Date ', 'plan del date']);
@@ -789,6 +924,15 @@ export function Dashboard() {
             // Fallback to index if fields are empty to prevent overwriting
             const finalId = (stableId === '_____' || !stableId) ? `row_${index}` : stableId;
 
+            // Automatically extract and preserve remarks from Excel rows if present
+            const rowRemark = String(getVal(row, ['Remark', 'remark', 'REMARK', 'Remarks', 'REMARKS']) || '').trim();
+            if (rowRemark) {
+              excelExtractedRemarks[finalId] = { text: rowRemark, updatedAt: Date.now() };
+              if (legacyIdStr) {
+                excelExtractedRemarks[legacyIdStr] = { text: rowRemark, updatedAt: Date.now() };
+              }
+            }
+
             return {
               id: finalId,
               legacyId: legacyIdStr,
@@ -815,6 +959,22 @@ export function Dashboard() {
               deliveredQty: deliveredQty,
             };
           });
+
+          // If Excel contained remarks, merge and sync them
+          if (Object.keys(excelExtractedRemarks).length > 0) {
+            setRemarks(prev => {
+              const merged = { ...excelExtractedRemarks, ...prev };
+              try {
+                localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+              } catch (e) {}
+              fetch('/api/remarks/batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ remarks: merged })
+              }).catch(() => {});
+              return merged;
+            });
+          }
 
           // Sort by Plan Del Date
           parsedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
@@ -855,24 +1015,64 @@ export function Dashboard() {
     }, 50); // Yield to show "reading" state
   };
 
+  const dragCounterRef = useRef(0);
+
+  useEffect(() => {
+    const handleWindowDrag = (e: DragEvent) => e.preventDefault();
+    window.addEventListener('dragover', handleWindowDrag);
+    window.addEventListener('drop', handleWindowDrag);
+    return () => {
+      window.removeEventListener('dragover', handleWindowDrag);
+      window.removeEventListener('drop', handleWindowDrag);
+    };
+  }, []);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragging(true);
+    }
+  }, []);
+
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(true);
-  }, []);
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!isDragging) setIsDragging(true);
+  }, [isDragging]);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(false);
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDragging(false);
+    }
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
     setIsDragging(false);
     const file = e.dataTransfer.files?.[0];
-    if (file && (file.name.endsWith('.xlsx') || file.name.endsWith('.csv') || file.name.endsWith('.xls'))) {
-      processFile(file);
-    } else {
-      alert("Please upload a valid Excel or CSV file.");
+    if (file) {
+      const fileNameLower = file.name.toLowerCase();
+      if (
+        fileNameLower.endsWith('.xlsx') || 
+        fileNameLower.endsWith('.xls') || 
+        fileNameLower.endsWith('.csv') ||
+        file.type.includes('spreadsheet') ||
+        file.type.includes('excel') ||
+        file.type.includes('csv')
+      ) {
+        processFile(file);
+      } else {
+        setError("Please upload a valid Excel (.xlsx, .xls) or CSV file.");
+      }
     }
   }, []);
 
@@ -1138,17 +1338,32 @@ export function Dashboard() {
                 </div>
               )}
 
-              <div 
-                className={`border-2 border-dashed rounded-2xl p-8 transition-colors cursor-pointer ${isDragging ? 'border-indigo-500 bg-indigo-50/50' : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'}`}
+              <label 
+                htmlFor="main-file-upload"
+                className={`block border-2 border-dashed rounded-2xl p-8 transition-colors cursor-pointer select-none ${
+                  isDragging ? 'border-indigo-500 bg-indigo-50/70' : 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50'
+                }`}
                 onDragOver={handleDragOver}
+                onDragEnter={handleDragEnter}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
               >
-                <UploadCloud className={`w-8 h-8 mx-auto mb-3 ${isDragging ? 'text-indigo-500' : 'text-slate-400'}`} />
-                <p className="text-sm font-medium text-slate-700 mb-1">Click to upload or drag and drop</p>
-                <p className="text-xs text-slate-500">XLSX, XLS, or CSV files</p>
-              </div>
+                <UploadCloud className={`w-8 h-8 mx-auto mb-3 pointer-events-none transition-colors ${isDragging ? 'text-indigo-500' : 'text-slate-400'}`} />
+                <p className="text-sm font-medium text-slate-700 mb-1 pointer-events-none">Click to upload or drag and drop</p>
+                <p className="text-xs text-slate-500 pointer-events-none">XLSX, XLS, or CSV files</p>
+                <input 
+                  id="main-file-upload"
+                  type="file" 
+                  className="sr-only" 
+                  ref={fileInputRef} 
+                  accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" 
+                  onChange={handleFileUpload} 
+                  onClick={(e) => { 
+                    e.stopPropagation();
+                    (e.target as HTMLInputElement).value = ''; 
+                  }}
+                />
+              </label>
             </>
           )}
         </div>
@@ -1165,11 +1380,16 @@ export function Dashboard() {
       </datalist>
 
       <input 
+        id="dashboard-header-file-upload"
         type="file" 
-        className="hidden" 
+        className="sr-only" 
         ref={fileInputRef} 
-        accept=".xlsx, .xls, .csv" 
+        accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" 
         onChange={handleFileUpload} 
+        onClick={(e) => {
+          e.stopPropagation();
+          (e.target as HTMLInputElement).value = '';
+        }}
       />
 
       <div className="mx-auto space-y-6" style={{ maxWidth: '1600px' }}>
