@@ -517,27 +517,52 @@ export function Dashboard() {
   useEffect(() => {
     let isMounted = true;
 
-    // Listen to main dashboard data
-    const unsubDashboard = onSnapshot(doc(db, 'dashboardData', 'main'), (snap) => {
-      if (snap.exists() && isMounted) {
-        const val = snap.data();
-        if (val.orders && Array.isArray(val.orders)) {
-          setData(val.orders);
-          setLastUpdated(val.lastUpdated || null);
-          try {
-            localStorage.setItem('production_dashboard_data', JSON.stringify(val.orders));
-          } catch (e) {}
+    // Listen to the entire dashboardData collection for chunked data
+    const unsubDashboard = onSnapshot(collection(db, 'dashboardData'), (snap) => {
+      if (!isMounted) return;
+      
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const meta = docs.find(d => d.id === 'meta') as any;
+      const main = docs.find(d => d.id === 'main') as any;
+      
+      if (main && main.orders && Array.isArray(main.orders)) {
+        // Legacy support: data still in 'main'
+        setData(main.orders);
+        setLastUpdated(main.lastUpdated || null);
+      } else if (meta && meta.orders && Array.isArray(meta.orders)) {
+        // Support for non-chunked meta doc
+        setData(meta.orders);
+        setLastUpdated(meta.lastUpdated || null);
+      } else if (meta && meta.chunkCount !== undefined) {
+        // Chunked data support
+        const chunks = docs.filter(d => d.id.startsWith('chunk_')).sort((a, b) => {
+          const idxA = parseInt(a.id.split('_')[1]);
+          const idxB = parseInt(b.id.split('_')[1]);
+          return idxA - idxB;
+        });
+
+        if (chunks.length >= meta.chunkCount && meta.chunkCount > 0) {
+          const allOrders = chunks.flatMap((c: any) => c.orders || []);
+          // Only update if we have meaningful data
+          if (allOrders.length > 0) {
+            setData(allOrders);
+            setLastUpdated(meta.lastUpdated || null);
+            try {
+              localStorage.setItem('production_dashboard_data', JSON.stringify(allOrders));
+            } catch (e) {}
+          }
         }
       }
     }, (err) => {
       console.error('Dashboard sync error:', err);
       if (err.message.includes('Quota exceeded')) {
         setError("Firestore quota exceeded. Data may not sync in real-time.");
+      } else {
+        setError(`Sync Error: ${err.message}`);
       }
     });
 
-    // Optimized Remarks Sync: Listen to a single document containing ALL remarks
-    // This dramatically reduces read units and keeps all PCs in sync perfectly.
+    // Optimized Remarks Sync
     const unsubRemarks = onSnapshot(doc(db, 'remarks_v2', 'all'), (snap) => {
       if (snap.exists() && isMounted) {
         const newRemarks = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
@@ -656,8 +681,8 @@ export function Dashboard() {
   };
 
   const persistDashboardData = async (parsedData: ProductionOrder[]) => {
-    setLoadingState('idle');
-    setUploadProgress({ current: 0, total: 0 });
+    setLoadingState('uploading');
+    setUploadProgress({ current: 0, total: parsedData.length });
 
     const now = Date.now();
     const uploadId = now.toString();
@@ -667,25 +692,53 @@ export function Dashboard() {
       localStorage.setItem('production_dashboard_data', JSON.stringify(parsedData));
     } catch (e) {}
 
-    // 2. Persist to Server API (Immediate Backup)
+    // 2. Persist to Firestore (Primary) - Using Chunked Strategy for large datasets
     try {
-      await fetch('/api/dashboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: parsedData, lastUpdated: now, uploadId })
-      });
-    } catch (e) {}
+      const CHUNK_SIZE = 400; // Safe size to stay under 1MB per doc
+      const chunks: ProductionOrder[][] = [];
+      for (let i = 0; i < parsedData.length; i += CHUNK_SIZE) {
+        chunks.push(parsedData.slice(i, i + CHUNK_SIZE));
+      }
 
-    // 3. Persist to Firestore (Primary)
-    try {
-      await setDoc(doc(db, 'dashboardData', 'main'), {
-        orders: parsedData,
+      // First, clear old chunks to avoid orphans if count decreases
+      const existingDocs = await getDocs(collection(db, 'dashboardData'));
+      const batch = writeBatch(db);
+      existingDocs.forEach(d => {
+        if (d.id.startsWith('chunk_') || d.id === 'main') {
+          batch.delete(d.ref);
+        }
+      });
+      await batch.commit();
+
+      // Write new chunks
+      for (let i = 0; i < chunks.length; i++) {
+        await setDoc(doc(db, 'dashboardData', `chunk_${i}`), {
+          orders: chunks[i],
+          uploadId
+        });
+        setUploadProgress(prev => ({ ...prev, current: Math.min((i + 1) * CHUNK_SIZE, parsedData.length) }));
+      }
+
+      // Write meta doc last to trigger sync on other PCs
+      await setDoc(doc(db, 'dashboardData', 'meta'), {
+        chunkCount: chunks.length,
         lastUpdated: now,
         uploadId: uploadId
       });
-    } catch (err) {
-      console.warn('Firestore Save Failed (Quota?), using local fallback:', err);
+
+      setLoadingState('idle');
+    } catch (err: any) {
+      console.error('Firestore Save Failed:', err);
+      setError(`Database Error: ${err.message || 'Failed to save data'}. Your data is still visible locally but might not sync to other PCs.`);
+      setLoadingState('idle');
     }
+
+    // 3. Persist to Server API (Background Backup)
+    fetch('/api/dashboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: parsedData, lastUpdated: now, uploadId })
+    }).catch(() => {});
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
