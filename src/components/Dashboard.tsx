@@ -578,6 +578,41 @@ export function Dashboard() {
       console.warn('Remarks sync error:', err);
     });
 
+    // Recovery logic: Fetch from legacy 'remarks' collection if remarks are missing
+    const recoverLegacyRemarks = async () => {
+      try {
+        const legacySnap = await getDocs(collection(db, 'remarks'));
+        if (!legacySnap.empty && isMounted) {
+          const legacyData: Record<string, { text: string; updatedAt: number | null }> = {};
+          legacySnap.forEach(doc => {
+            const d = doc.data();
+            if (d.text) {
+              legacyData[doc.id] = { text: d.text, updatedAt: d.updatedAt || null };
+            }
+          });
+          
+          setRemarks(prev => {
+            const merged = { ...legacyData, ...prev }; // New remarks (remarks_v2) take precedence
+            try {
+              localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+            } catch (e) {}
+            return merged;
+          });
+
+          // Optional: Migration to remarks_v2/all for future optimization
+          if (Object.keys(legacyData).length > 0) {
+            const remarksRef = doc(db, 'remarks_v2', 'all');
+            const currentSnap = await getDoc(remarksRef);
+            const currentData = currentSnap.exists() ? currentSnap.data() : {};
+            await setDoc(remarksRef, { ...legacyData, ...currentData }, { merge: true });
+          }
+        }
+      } catch (err) {
+        console.warn('Legacy remarks recovery failed:', err);
+      }
+    };
+    recoverLegacyRemarks();
+
     return () => {
       isMounted = false;
       unsubDashboard();
