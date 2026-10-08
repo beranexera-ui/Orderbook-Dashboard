@@ -423,41 +423,40 @@ function getRowRemark(item: ProductionOrder, remarksMap: Record<string, { text: 
   if (!remarksMap || typeof remarksMap !== 'object') return { text: '', updatedAt: null };
 
   const formatRemark = (r: { text: string; updatedAt?: number | null } | undefined): { text: string; updatedAt: number | null } | null => {
-    if (!r) return null;
-    return { text: r.text || '', updatedAt: r.updatedAt ?? null };
+    if (!r || !r.text || r.text.trim() === '') return null;
+    return { text: r.text.trim(), updatedAt: r.updatedAt ?? null };
   };
 
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
   // 1. Direct match on row.id
-  if (remarksMap[item.id]?.text) {
-    const res = formatRemark(remarksMap[item.id]);
-    if (res) return res;
-  }
+  let res = formatRemark(remarksMap[item.id]);
+  if (res) return res;
 
   // 2. Direct match on row.legacyId
-  if (item.legacyId && remarksMap[item.legacyId]?.text) {
-    const res = formatRemark(remarksMap[item.legacyId]);
+  if (item.legacyId) {
+    res = formatRemark(remarksMap[item.legacyId]);
     if (res) return res;
   }
 
   // 3. Raw combined keys
   const rawStable = `${item.vpoNo}_${item.scheduleNo}_${item.styleNo}_${item.colorCode}_${item.destination}`;
-  if (remarksMap[rawStable]?.text) {
-    const res = formatRemark(remarksMap[rawStable]);
-    if (res) return res;
-  }
+  res = formatRemark(remarksMap[rawStable]);
+  if (res) return res;
 
   const rawLegacy = `${item.vpoNo}_${item.scheduleNo}_${item.styleNo}_${item.colorCode}_${item.destination}_${item.planDelDate}`;
-  if (remarksMap[rawLegacy]?.text) {
-    const res = formatRemark(remarksMap[rawLegacy]);
-    if (res) return res;
-  }
+  res = formatRemark(remarksMap[rawLegacy]);
+  if (res) return res;
 
   // 4. Normalized fuzzy search (ignore all non-alphanumeric and casing)
-  const normTarget = rawStable.toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (normTarget) {
+  const normStable = normalize(rawStable);
+  const normLegacy = normalize(rawLegacy);
+  
+  if (normStable || normLegacy) {
     for (const [k, v] of Object.entries(remarksMap)) {
-      if (v?.text && k.toLowerCase().replace(/[^a-z0-9]/g, '') === normTarget) {
-        const res = formatRemark(v);
+      const normK = normalize(k);
+      if (v?.text && (normK === normStable || normK === normLegacy)) {
+        res = formatRemark(v);
         if (res) return res;
       }
     }
@@ -567,7 +566,15 @@ export function Dashboard() {
       if (snap.exists() && isMounted) {
         const newRemarks = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
         setRemarks(prev => {
-          const merged = { ...prev, ...newRemarks };
+          const merged = { ...prev };
+          Object.entries(newRemarks).forEach(([id, data]) => {
+            // Only update if the new remark is non-empty, OR if we don't have it yet
+            if (data.text && data.text.trim() !== '') {
+              merged[id] = data;
+            } else if (!merged[id]) {
+              merged[id] = data;
+            }
+          });
           try {
             localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
           } catch (e) {}
@@ -586,25 +593,44 @@ export function Dashboard() {
           const legacyData: Record<string, { text: string; updatedAt: number | null }> = {};
           legacySnap.forEach(doc => {
             const d = doc.data();
-            if (d.text) {
-              legacyData[doc.id] = { text: d.text, updatedAt: d.updatedAt || null };
+            if (d.text && d.text.trim() !== '') {
+              legacyData[doc.id] = { text: d.text.trim(), updatedAt: d.updatedAt || null };
             }
           });
           
-          setRemarks(prev => {
-            const merged = { ...legacyData, ...prev }; // New remarks (remarks_v2) take precedence
-            try {
-              localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-            } catch (e) {}
-            return merged;
-          });
-
-          // Optional: Migration to remarks_v2/all for future optimization
           if (Object.keys(legacyData).length > 0) {
+            setRemarks(prev => {
+              const merged = { ...prev };
+              // Merge legacy into current, but don't overwrite non-empty current remarks
+              Object.entries(legacyData).forEach(([id, data]) => {
+                if (!merged[id] || !merged[id].text || merged[id].text.trim() === '') {
+                  merged[id] = data;
+                }
+              });
+              
+              try {
+                localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+              } catch (e) {}
+              return merged;
+            });
+
+            // Migration to remarks_v2/all
             const remarksRef = doc(db, 'remarks_v2', 'all');
             const currentSnap = await getDoc(remarksRef);
-            const currentData = currentSnap.exists() ? currentSnap.data() : {};
-            await setDoc(remarksRef, { ...legacyData, ...currentData }, { merge: true });
+            const currentData = currentSnap.exists() ? currentSnap.data() as Record<string, any> : {};
+            
+            const toUpdate: Record<string, any> = {};
+            let hasNew = false;
+            Object.entries(legacyData).forEach(([id, data]) => {
+              if (!currentData[id] || !currentData[id].text || currentData[id].text.trim() === '') {
+                toUpdate[id] = data;
+                hasNew = true;
+              }
+            });
+
+            if (hasNew) {
+              await setDoc(remarksRef, toUpdate, { merge: true });
+            }
           }
         }
       } catch (err) {
