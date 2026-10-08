@@ -8,6 +8,10 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /remarks_v2/{docId} {
+      allow read, write: if true;
+    }
+
     match /remarks/{remarkId} {
       allow read, write: if true;
     }

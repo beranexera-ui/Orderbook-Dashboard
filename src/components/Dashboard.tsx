@@ -3,7 +3,7 @@ import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, onSnapshot, collection, getDocs, writeBatch, getDocFromServer } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, collection, getDocs, writeBatch, getDocFromServer, runTransaction } from 'firebase/firestore';
 import { KPIView } from './KPIView';
 import { SewOutReportModal } from './SewOutReportModal';
 import { PrintOrientationModal } from './PrintOrientationModal';
@@ -513,42 +513,13 @@ export function Dashboard() {
     testConnection();
   }, []);
 
-  // 2. Real-time Sync from Firestore with Server Fallback
+  // 2. Real-time Sync from Firestore
   useEffect(() => {
     let isMounted = true;
 
-    // Load from Server API as immediate fallback/init
-    const loadFromApi = async () => {
-      try {
-        const res = await fetch('/api/dashboard');
-        if (res.ok) {
-          const dash = await res.json();
-          if (dash?.data && Array.isArray(dash.data) && dash.data.length > 0) {
-            if (isMounted) {
-              setData(prev => (prev && prev.length > 0 ? prev : dash.data));
-              if (dash.lastUpdated) setLastUpdated(dash.lastUpdated);
-            }
-          }
-        }
-      } catch (e) {}
-
-      try {
-        const remRes = await fetch('/api/remarks');
-        if (remRes.ok) {
-          const remData = await remRes.json();
-          if (remData && typeof remData === 'object' && Object.keys(remData).length > 0) {
-            if (isMounted) {
-              setRemarks(prev => ({ ...remData, ...prev }));
-            }
-          }
-        }
-      } catch (e) {}
-    };
-
-    loadFromApi();
-
+    // Listen to main dashboard data
     const unsubDashboard = onSnapshot(doc(db, 'dashboardData', 'main'), (snap) => {
-      if (snap.exists()) {
+      if (snap.exists() && isMounted) {
         const val = snap.data();
         if (val.orders && Array.isArray(val.orders)) {
           setData(val.orders);
@@ -559,52 +530,33 @@ export function Dashboard() {
         }
       }
     }, (err) => {
+      console.error('Dashboard sync error:', err);
       if (err.message.includes('Quota exceeded')) {
-        setError("Firestore quota exceeded. Using local server backup.");
+        setError("Firestore quota exceeded. Data may not sync in real-time.");
       }
     });
 
-    const unsubRemarks = onSnapshot(collection(db, 'remarks'), (snap) => {
-      const newRemarks: Record<string, { text: string, updatedAt: number | null }> = {};
-      snap.forEach(d => {
-        newRemarks[d.id] = d.data() as any;
-      });
-      setRemarks(prev => {
-        const merged = { ...prev, ...newRemarks };
-        try {
-          localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-        } catch (e) {}
-        return merged;
-      });
+    // Optimized Remarks Sync: Listen to a single document containing ALL remarks
+    // This dramatically reduces read units and keeps all PCs in sync perfectly.
+    const unsubRemarks = onSnapshot(doc(db, 'remarks_v2', 'all'), (snap) => {
+      if (snap.exists() && isMounted) {
+        const newRemarks = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
+        setRemarks(prev => {
+          const merged = { ...prev, ...newRemarks };
+          try {
+            localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
+      }
     }, (err) => {
       console.warn('Remarks sync error:', err);
     });
-
-    // Also listen to Server SSE for instant sync when Firestore is down
-    const es = new EventSource('/api/realtime');
-    es.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'dashboard') {
-          if (Array.isArray(msg.data)) {
-            setData(msg.data);
-            if (msg.lastUpdated) setLastUpdated(msg.lastUpdated);
-          }
-        } else if (msg.type === 'remark') {
-          if (msg.id) {
-            setRemarks(prev => ({ ...prev, [msg.id]: { text: msg.text, updatedAt: msg.updatedAt } }));
-          }
-        } else if (msg.type === 'remarks_batch') {
-          if (msg.remarks) setRemarks(prev => ({ ...prev, ...msg.remarks }));
-        }
-      } catch (e) {}
-    };
 
     return () => {
       isMounted = false;
       unsubDashboard();
       unsubRemarks();
-      es.close();
     };
   }, []);
 
@@ -667,7 +619,7 @@ export function Dashboard() {
     const updated = Date.now();
     const remarkData = { text, updatedAt: updated };
     
-    // 1. Update local state immediately
+    // 1. Update local state immediately for responsiveness
     setRemarks(prev => {
       const next = { ...prev, [id]: remarkData };
       try {
@@ -676,21 +628,31 @@ export function Dashboard() {
       return next;
     });
 
-    // 2. Persist to Firestore (Primary)
+    // 2. Persist to Firestore (Primary) using Transaction to single document
     try {
-      await setDoc(doc(db, 'remarks', id), remarkData);
+      const remarksRef = doc(db, 'remarks_v2', 'all');
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(remarksRef);
+        if (!snap.exists()) {
+          transaction.set(remarksRef, { [id]: remarkData });
+        } else {
+          transaction.update(remarksRef, { [id]: remarkData });
+        }
+      });
     } catch (err) {
-      console.warn('Firestore Save Failed (Quota?), using local fallback:', err);
+      console.warn('Firestore Transaction Failed, attempting fallback:', err);
+      // Last-ditch effort if transaction fails
+      try {
+        await setDoc(doc(db, 'remarks', id), remarkData);
+      } catch (e) {}
     }
 
-    // 3. Persist to Server API (Backup & Sync fallback)
-    try {
-      await fetch('/api/remarks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, text, updatedAt: updated })
-      });
-    } catch (e) {}
+    // 3. Optional: Sync to Server API for redundancy
+    fetch('/api/remarks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, text, updatedAt: updated })
+    }).catch(() => {});
   };
 
   const persistDashboardData = async (parsedData: ProductionOrder[]) => {
@@ -911,12 +873,18 @@ export function Dashboard() {
               return merged;
             });
 
-            // Sync extracted remarks to Firestore in background
+            // Sync extracted remarks to Firestore in background (Optimized)
             const syncExtracted = async () => {
               try {
+                // Store all in the single document for optimized sync
+                const remarksRef = doc(db, 'remarks_v2', 'all');
+                const snap = await getDoc(remarksRef);
+                const existing = snap.exists() ? snap.data() : {};
+                await setDoc(remarksRef, { ...existing, ...excelExtractedRemarks }, { merge: true });
+                
+                // Legacy support for older clients
                 const keys = Object.keys(excelExtractedRemarks);
-                // Firestore batch limit is 500
-                for (let i = 0; i < keys.length; i += 500) {
+                for (let i = 0; i < Math.min(keys.length, 100); i += 500) { // Limit legacy sync to avoid quota hit
                   const batch = writeBatch(db);
                   const chunk = keys.slice(i, i + 500);
                   chunk.forEach(id => {
