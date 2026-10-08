@@ -4,21 +4,8 @@ service cloud.firestore {
     // Public access for dashboard data and remarks
     // WARNING: Anyone with the URL can read and write data.
     
-    match /dashboardData/{docId} {
-      allow read, write: if true;
-    }
-
-    match /remarks_v2/{docId} {
-      allow read, write: if true;
-    }
-
-    match /remarks/{remarkId} {
-      allow read, write: if true;
-    }
-
-    // Default deny for everything else
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if true;
     }
   }
 }

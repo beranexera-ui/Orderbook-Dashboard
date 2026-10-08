@@ -419,7 +419,11 @@ function getNum(row: any, searchKeys: string[]): number {
   return isNaN(parsed) ? 0 : parsed;
 }
 
-function getRowRemark(item: ProductionOrder, remarksMap: Record<string, { text: string; updatedAt?: number | null }>): { text: string; updatedAt: number | null } {
+function getRowRemark(
+  item: ProductionOrder, 
+  remarksMap: Record<string, { text: string; updatedAt?: number | null }>,
+  normalizedMap?: Map<string, { text: string; updatedAt: number | null }>
+): { text: string; updatedAt: number | null } {
   if (!remarksMap || typeof remarksMap !== 'object') return { text: '', updatedAt: null };
 
   const formatRemark = (r: { text: string; updatedAt?: number | null } | undefined): { text: string; updatedAt: number | null } | null => {
@@ -448,16 +452,22 @@ function getRowRemark(item: ProductionOrder, remarksMap: Record<string, { text: 
   res = formatRemark(remarksMap[rawLegacy]);
   if (res) return res;
 
-  // 4. Normalized fuzzy search (ignore all non-alphanumeric and casing)
+  // 4. Normalized fuzzy search using pre-calculated Map if available
   const normStable = normalize(rawStable);
   const normLegacy = normalize(rawLegacy);
   
-  if (normStable || normLegacy) {
-    for (const [k, v] of Object.entries(remarksMap)) {
-      const normK = normalize(k);
-      if (v?.text && (normK === normStable || normK === normLegacy)) {
-        res = formatRemark(v);
-        if (res) return res;
+  if (normalizedMap) {
+    const found = normalizedMap.get(normStable) || normalizedMap.get(normLegacy);
+    if (found) return found;
+  } else {
+    // Fallback if Map not provided (slow)
+    if (normStable || normLegacy) {
+      for (const [k, v] of Object.entries(remarksMap)) {
+        const normK = normalize(k);
+        if (v?.text && (normK === normStable || normK === normLegacy)) {
+          const formatted = formatRemark(v);
+          if (formatted) return formatted;
+        }
       }
     }
   }
@@ -475,6 +485,28 @@ export function Dashboard() {
   const [loadingState, setLoadingState] = useState<'idle' | 'reading' | 'parsing' | 'uploading'>('idle');
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [remarks, setRemarks] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
+  
+  // Pre-calculate normalized remarks map for fast fuzzy matching
+  const normalizedRemarksMap = useMemo(() => {
+    const map = new Map<string, { text: string; updatedAt: number | null }>();
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    
+    Object.entries(remarks).forEach(([id, data]) => {
+      const remarkData = data as { text: string; updatedAt: number | null };
+      if (remarkData.text && remarkData.text.trim() !== '') {
+        const normKey = normalize(id);
+        if (normKey) {
+          // Keep the newest remark if there's a collision in normalized keys
+          const existing = map.get(normKey);
+          if (!existing || (remarkData.updatedAt || 0) > (existing.updatedAt || 0)) {
+            map.set(normKey, { text: remarkData.text.trim(), updatedAt: remarkData.updatedAt || null });
+          }
+        }
+      }
+    });
+    return map;
+  }, [remarks]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -588,8 +620,13 @@ export function Dashboard() {
     // Recovery logic: Fetch from legacy 'remarks' collection if remarks are missing
     const recoverLegacyRemarks = async () => {
       try {
+        // Check if we've already done migration this session to avoid redundant heavy calls
+        const alreadyMigrated = sessionStorage.getItem('migration_done');
+        if (alreadyMigrated) return;
+
         const legacySnap = await getDocs(collection(db, 'remarks'));
         if (!legacySnap.empty && isMounted) {
+          console.log(`[Migration] Found ${legacySnap.size} legacy remarks. Checking for recovery...`);
           const legacyData: Record<string, { text: string; updatedAt: number | null }> = {};
           legacySnap.forEach(doc => {
             const d = doc.data();
@@ -601,20 +638,20 @@ export function Dashboard() {
           if (Object.keys(legacyData).length > 0) {
             setRemarks(prev => {
               const merged = { ...prev };
-              // Merge legacy into current, but don't overwrite non-empty current remarks
+              let restoredCount = 0;
               Object.entries(legacyData).forEach(([id, data]) => {
                 if (!merged[id] || !merged[id].text || merged[id].text.trim() === '') {
                   merged[id] = data;
+                  restoredCount++;
                 }
               });
-              
-              try {
-                localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-              } catch (e) {}
+              if (restoredCount > 0) {
+                console.log(`[Migration] Restored ${restoredCount} remarks from legacy collection.`);
+              }
               return merged;
             });
 
-            // Migration to remarks_v2/all
+            // Migration to remarks_v2/all (optimized single doc)
             const remarksRef = doc(db, 'remarks_v2', 'all');
             const currentSnap = await getDoc(remarksRef);
             const currentData = currentSnap.exists() ? currentSnap.data() as Record<string, any> : {};
@@ -629,8 +666,16 @@ export function Dashboard() {
             });
 
             if (hasNew) {
-              await setDoc(remarksRef, toUpdate, { merge: true });
+              // Batch the update if it's too large for a single doc (Firestore doc limit is 1MB)
+              // 300 remarks is fine, but 5000 might not be.
+              const keys = Object.keys(toUpdate);
+              for (let i = 0; i < keys.length; i += 200) {
+                const chunk: Record<string, any> = {};
+                keys.slice(i, i + 200).forEach(k => chunk[k] = toUpdate[k]);
+                await setDoc(remarksRef, chunk, { merge: true });
+              }
             }
+            sessionStorage.setItem('migration_done', 'true');
           }
         }
       } catch (err) {
@@ -943,7 +988,9 @@ export function Dashboard() {
             const stableId = `${vpoStr}_${schedStr}_${styleStr}_${colorStr}_${destStr}`.replace(/[^a-zA-Z0-9_-]/g, '-');
             const finalId = (stableId === '_____' || !stableId) ? `row_${index}` : stableId;
 
-            const rowRemark = String(getVal(row, ['Remark', 'remark', 'REMARK', 'Remarks', 'REMARKS']) || '').trim();
+            // Expanded Remark column search
+            const rowRemark = String(getVal(row, ['Remark', 'remark', 'REMARK', 'Remarks', 'REMARKS', 'Comment', 'Comments', 'Note', 'Notes', 'Production Remark', 'Production Remarks', 'PROD REMARK', 'PROD REMARKS']) || '').trim();
+            
             if (rowRemark) {
               excelExtractedRemarks[finalId] = { text: rowRemark, updatedAt: Date.now() };
               if (legacyIdStr) {
@@ -975,6 +1022,7 @@ export function Dashboard() {
               cumCTNQty: getNum(row, ['Cum CTN Qty', 'CUM CTN QTY', 'Cum Ctn Qty']),
               statusText: statusText,
               deliveredQty: deliveredQty,
+              remark: rowRemark // Store it in the object as well
             };
           });
 
@@ -1124,7 +1172,7 @@ export function Dashboard() {
         return false;
       }
 
-      const itemRemarkText = getRowRemark(item, remarks).text.trim();
+      const itemRemarkText = getRowRemark(item, remarks, normalizedRemarksMap).text.trim();
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
@@ -1178,7 +1226,7 @@ export function Dashboard() {
     const options = new Set<string>();
     
     data.forEach(item => {
-      const itemRemarkText = getRowRemark(item, remarks).text.trim();
+      const itemRemarkText = getRowRemark(item, remarks, normalizedRemarksMap).text.trim();
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
@@ -1283,7 +1331,7 @@ export function Dashboard() {
       'Cum SewOut Qty': Number(item.cumSewOutQty) || 0,
       'Cum CTN Qty': Number(item.cumCTNQty) || 0,
       'Status': item.statusText,
-      'Remark': getRowRemark(item, remarks).text,
+      'Remark': getRowRemark(item, remarks, normalizedRemarksMap).text,
       'Delivered Qty': Number(item.deliveredQty) || 0
     }));
 
@@ -1670,8 +1718,8 @@ export function Dashboard() {
                           </td>
                           <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
                             <RemarkInput 
-                              initialValue={getRowRemark(row, remarks).text}
-                              updatedAt={getRowRemark(row, remarks).updatedAt}
+                              initialValue={getRowRemark(row, remarks, normalizedRemarksMap).text}
+                              updatedAt={getRowRemark(row, remarks, normalizedRemarksMap).updatedAt}
                               rowId={row.id}
                               onSave={handleRemarkChange}
                             />
@@ -1760,8 +1808,8 @@ export function Dashboard() {
 
                         <div className="mt-auto">
                           <RemarkInput 
-                            initialValue={getRowRemark(row, remarks).text}
-                            updatedAt={getRowRemark(row, remarks).updatedAt}
+                            initialValue={getRowRemark(row, remarks, normalizedRemarksMap).text}
+                            updatedAt={getRowRemark(row, remarks, normalizedRemarksMap).updatedAt}
                             rowId={row.id}
                             onSave={handleRemarkChange}
                           />
@@ -1815,6 +1863,22 @@ export function Dashboard() {
         initialWeeks={filterWeekNo}
         initialBuyers={filterBuyer}
       />
+
+      <div className="mt-8 text-[10px] text-slate-300 text-center pb-4 opacity-50 hover:opacity-100 transition-opacity flex flex-col items-center gap-2">
+        <div>
+          Database Status: {Object.keys(remarks).length} active remarks synced • 
+          Data Window: {sixWeekWindow.start.toLocaleDateString()} - {sixWeekWindow.end.toLocaleDateString()}
+        </div>
+        <button 
+          onClick={async () => {
+            sessionStorage.removeItem('migration_done');
+            window.location.reload();
+          }}
+          className="px-2 py-0.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-400"
+        >
+          Force Sync Recovery
+        </button>
+      </div>
     </div>
   );
 }
