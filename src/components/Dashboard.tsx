@@ -475,6 +475,16 @@ function getVal(row: any, searchKeys: string[]): any {
   return undefined;
 }
 
+async function safeJson(res: Response) {
+  try {
+    const text = await res.text();
+    if (!text || text.trim() === '') return null;
+    return JSON.parse(text);
+  } catch (e) {
+    return null;
+  }
+}
+
 function getNum(row: any, searchKeys: string[]): number {
   const val = getVal(row, searchKeys);
   if (val == null || val === '') return 0;
@@ -820,8 +830,8 @@ export function Dashboard() {
 
     // Load remarks immediately from server backup (contains all 968+ remarks across weeks 41-48)
     fetch('/api/remarks')
-      .then(res => res.json())
-      .then((serverRemarks: Record<string, { text: string; updatedAt: number | null }>) => {
+      .then(res => safeJson(res))
+      .then((serverRemarks: Record<string, { text: string; updatedAt: number | null }> | null) => {
         if (!isMounted || !serverRemarks || typeof serverRemarks !== 'object') return;
         if (Object.keys(serverRemarks).length > 0) {
           setRemarks(prev => {
@@ -845,8 +855,8 @@ export function Dashboard() {
 
     // Load production lines immediately from server backup
     fetch('/api/production-lines')
-      .then(res => res.json())
-      .then((serverLines: Record<string, { text: string; updatedAt: number | null }>) => {
+      .then(res => safeJson(res))
+      .then((serverLines: Record<string, { text: string; updatedAt: number | null }> | null) => {
         if (!isMounted || !serverLines || typeof serverLines !== 'object') return;
         if (Object.keys(serverLines).length > 0) {
           setProductionLines(prev => {
@@ -869,7 +879,7 @@ export function Dashboard() {
 
     // Load dashboard order items if client has not received them yet
     fetch('/api/dashboard')
-      .then(res => res.json())
+      .then(res => safeJson(res))
       .then(serverDashboard => {
         if (!isMounted || !serverDashboard?.data || !Array.isArray(serverDashboard.data)) return;
         if (serverDashboard.data.length > 0) {
@@ -2197,7 +2207,7 @@ export function Dashboard() {
               
               // 1. Fetch remarks from server backup
               const remarksRes = await fetch('/api/remarks');
-              const serverRemarks = await remarksRes.json();
+              const serverRemarks = await safeJson(remarksRes);
               
               if (serverRemarks && typeof serverRemarks === 'object') {
                 const count = Object.keys(serverRemarks).length;
@@ -2217,7 +2227,7 @@ export function Dashboard() {
 
               // 3. Fetch dashboard if needed
               const dashRes = await fetch('/api/dashboard');
-              const serverDash = await dashRes.json();
+              const serverDash = await safeJson(dashRes);
               if (serverDash?.data && Array.isArray(serverDash.data) && serverDash.data.length > 0) {
                 setData(serverDash.data);
                 if (serverDash.lastUpdated) setLastUpdated(serverDash.lastUpdated);
