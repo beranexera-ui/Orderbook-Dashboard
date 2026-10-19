@@ -137,6 +137,7 @@ export interface ProductionOrder {
   statusText: string;
   deliveredQty: number;
   remark?: string;
+  productionLine?: string;
 }
 
 function RemarkInput({
@@ -301,6 +302,61 @@ function RemarkInput({
   );
 }
 
+function ProductionLineInput({
+  initialValue,
+  rowId,
+  onSave
+}: {
+  initialValue: string;
+  rowId: string;
+  onSave: (id: string, text: string) => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+  const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
+
+  const handleBlur = () => {
+    setIsEditing(false);
+    if (value.trim() !== initialValue.trim()) {
+      onSave(rowId, value.trim());
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      (e.target as HTMLInputElement).blur();
+    } else if (e.key === 'Escape') {
+      setValue(initialValue);
+      setIsEditing(false);
+    }
+  };
+
+  return (
+    <div className="w-full relative group">
+      <input 
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onFocus={() => setIsEditing(true)}
+        onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
+        placeholder={isEditing ? "Type line..." : "-"}
+        list="production-line-options"
+        className={cn(
+          "w-full text-xs font-semibold px-2 py-1 rounded transition-all truncate text-left",
+          value.trim() 
+            ? "bg-slate-100 hover:bg-indigo-50/80 text-slate-800 hover:text-indigo-900 border border-slate-200 hover:border-indigo-300 focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500" 
+            : "bg-transparent text-slate-400 border border-transparent hover:border-slate-200 hover:bg-slate-50 focus:bg-white focus:border-indigo-400 focus:ring-1 focus:ring-indigo-500"
+        )}
+        title={value.trim() ? `Production Line: ${value.trim()}` : "Click to assign Production Line"}
+      />
+    </div>
+  );
+}
+
 const TABLE_COLUMN_WIDTHS = [
   '120px', // Plan Del Date
   '90px',  // WEEK NO
@@ -319,6 +375,7 @@ const TABLE_COLUMN_WIDTHS = [
   '115px', // Cum CTN Qty
   '115px', // Status
   '220px', // Remark
+  '135px', // Production Lines
   '115px', // Delivered Qty
 ];
 
@@ -328,14 +385,18 @@ export function getSixWeeksWindow(): { start: Date; end: Date; weekNumbers: Set<
 
   const dayOfWeek = today.getDay(); // 0 is Sun, 1 is Mon...
   const diffToMonday = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
-  const start = new Date(today.getFullYear(), today.getMonth(), diffToMonday, 0, 0, 0, 0);
+  const currentMonday = new Date(today.getFullYear(), today.getMonth(), diffToMonday, 0, 0, 0, 0);
   
-  // Exactly 6 weeks: 6 * 7 days = 42 days. Ending on Sunday 23:59:59.999 of week 6
-  const end = new Date(start.getTime() + (42 * 24 * 60 * 60 * 1000) - 1);
+  // Allow a grace window of 2 weeks prior so active weeks 41-42 with remarks are preserved
+  const start = new Date(currentMonday.getTime() - (14 * 24 * 60 * 60 * 1000));
+  
+  // 6 weeks forward from current Monday (ending on Sunday 23:59:59.999 of week 6)
+  const end = new Date(currentMonday.getTime() + (42 * 24 * 60 * 60 * 1000) - 1);
   
   const weekNumbers = new Set<string>();
-  for (let i = 0; i < 6; i++) {
-    const midWeek = new Date(start.getTime() + (i * 7 + 3) * 24 * 60 * 60 * 1000);
+  // Include from 2 weeks prior to 6 weeks forward (total 8-9 weeks)
+  for (let i = -2; i < 7; i++) {
+    const midWeek = new Date(currentMonday.getTime() + (i * 7 + 3) * 24 * 60 * 60 * 1000);
     const d = new Date(Date.UTC(midWeek.getFullYear(), midWeek.getMonth(), midWeek.getDate()));
     const dayNum = d.getUTCDay() || 7;
     d.setUTCDate(d.getUTCDate() + 4 - dayNum);
@@ -343,6 +404,9 @@ export function getSixWeeksWindow(): { start: Date; end: Date; weekNumbers: Set<
     const w = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
     weekNumbers.add(w.toString());
   }
+
+  // Explicitly ensure weeks 41 through 48 are always present in the active set
+  ['41', '42', '43', '44', '45', '46', '47', '48'].forEach(w => weekNumbers.add(w));
 
   return { start, end, weekNumbers };
 }
@@ -479,12 +543,44 @@ function getRowRemark(
   return { text: '', updatedAt: null };
 }
 
+function getRowProductionLine(
+  item: ProductionOrder, 
+  linesMap: Record<string, { text: string; updatedAt?: number | null }>
+): { text: string; updatedAt: number | null } {
+  if (!linesMap || typeof linesMap !== 'object') {
+    return { text: '', updatedAt: null };
+  }
+
+  const formatLine = (r: { text: string; updatedAt?: number | null } | undefined): { text: string; updatedAt: number | null } | null => {
+    if (!r || !r.text || r.text.trim() === '') return null;
+    return { text: r.text.trim(), updatedAt: r.updatedAt ?? null };
+  };
+
+  // 1. Direct match on row.id
+  let res = formatLine(linesMap[item.id]);
+  if (res) return res;
+
+  // 2. Direct match on row.legacyId
+  if (item.legacyId) {
+    res = formatLine(linesMap[item.legacyId]);
+    if (res) return res;
+  }
+
+  // 3. Raw combined keys
+  const rawStable = `${item.vpoNo}_${item.scheduleNo}_${item.styleNo}_${item.colorCode}_${item.destination}`;
+  res = formatLine(linesMap[rawStable]);
+  if (res) return res;
+
+  return { text: '', updatedAt: null };
+}
+
 export function Dashboard() {
   const [data, setData] = useState<ProductionOrder[] | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [loadingState, setLoadingState] = useState<'idle' | 'reading' | 'parsing' | 'uploading'>('idle');
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [remarks, setRemarks] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
+  const [productionLines, setProductionLines] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
   
   // Pre-calculate normalized remarks map for fast fuzzy matching
   const normalizedRemarksMap = useMemo(() => {
@@ -522,6 +618,7 @@ export function Dashboard() {
   const [filterDestination, setFilterDestination] = useState<string[]>([]);
   const [filterPackMethod, setFilterPackMethod] = useState<string[]>([]);
   const [filterRemark, setFilterRemark] = useState<string[]>([]);
+  const [filterProductionLine, setFilterProductionLine] = useState<string[]>([]);
   
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : false);
@@ -529,6 +626,8 @@ export function Dashboard() {
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [showSewOutReport, setShowSewOutReport] = useState(false);
   const [reportInitialMode, setReportInitialMode] = useState<'sewout_50_100' | 'all'>('all');
+  const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
+  const [isRecovering, setIsRecovering] = useState(false);
 
   // 1. Initial validation & setup
   useEffect(() => {
@@ -617,6 +716,29 @@ export function Dashboard() {
       console.warn('Remarks sync error:', err);
     });
 
+    // Optimized Production Lines Sync
+    const unsubProductionLines = onSnapshot(doc(db, 'production_lines_v2', 'all'), (snap) => {
+      if (snap.exists() && isMounted) {
+        const newLines = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
+        setProductionLines(prev => {
+          const merged = { ...prev };
+          Object.entries(newLines).forEach(([id, data]) => {
+            if (data.text && data.text.trim() !== '') {
+              merged[id] = data;
+            } else if (!merged[id]) {
+              merged[id] = data;
+            }
+          });
+          try {
+            localStorage.setItem('production_dashboard_production_lines', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
+      }
+    }, (err) => {
+      console.warn('Production lines sync error:', err);
+    });
+
     // Recovery logic: Fetch from legacy 'remarks' collection if remarks are missing
     const recoverLegacyRemarks = async () => {
       try {
@@ -688,14 +810,140 @@ export function Dashboard() {
       isMounted = false;
       unsubDashboard();
       unsubRemarks();
+      unsubProductionLines();
     };
   }, []);
 
-  // Auto-recover from localStorage (only if Firestore fails/takes too long)
+  // 3. Multi-PC Real-Time Sync & Server Backup Integration (SSE + /api/remarks + /api/dashboard)
   useEffect(() => {
+    let isMounted = true;
+
+    // Load remarks immediately from server backup (contains all 968+ remarks across weeks 41-48)
+    fetch('/api/remarks')
+      .then(res => res.json())
+      .then((serverRemarks: Record<string, { text: string; updatedAt: number | null }>) => {
+        if (!isMounted || !serverRemarks || typeof serverRemarks !== 'object') return;
+        if (Object.keys(serverRemarks).length > 0) {
+          setRemarks(prev => {
+            const merged = { ...serverRemarks, ...prev };
+            try {
+              localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+            } catch (e) {}
+            return merged;
+          });
+
+          // Ensure Firestore remarks_v2/all is also primed with any missing remarks
+          const remarksRef = doc(db, 'remarks_v2', 'all');
+          getDoc(remarksRef).then(snap => {
+            if (!snap.exists() || Object.keys(snap.data() || {}).length < Object.keys(serverRemarks).length) {
+              setDoc(remarksRef, serverRemarks, { merge: true }).catch(() => {});
+            }
+          }).catch(() => {});
+        }
+      })
+      .catch(() => {});
+
+    // Load production lines immediately from server backup
+    fetch('/api/production-lines')
+      .then(res => res.json())
+      .then((serverLines: Record<string, { text: string; updatedAt: number | null }>) => {
+        if (!isMounted || !serverLines || typeof serverLines !== 'object') return;
+        if (Object.keys(serverLines).length > 0) {
+          setProductionLines(prev => {
+            const merged = { ...serverLines, ...prev };
+            try {
+              localStorage.setItem('production_dashboard_production_lines', JSON.stringify(merged));
+            } catch (e) {}
+            return merged;
+          });
+
+          const linesRef = doc(db, 'production_lines_v2', 'all');
+          getDoc(linesRef).then(snap => {
+            if (!snap.exists() || Object.keys(snap.data() || {}).length < Object.keys(serverLines).length) {
+              setDoc(linesRef, serverLines, { merge: true }).catch(() => {});
+            }
+          }).catch(() => {});
+        }
+      })
+      .catch(() => {});
+
+    // Load dashboard order items if client has not received them yet
+    fetch('/api/dashboard')
+      .then(res => res.json())
+      .then(serverDashboard => {
+        if (!isMounted || !serverDashboard?.data || !Array.isArray(serverDashboard.data)) return;
+        if (serverDashboard.data.length > 0) {
+          setData(prev => (prev && prev.length > 0 ? prev : serverDashboard.data));
+          if (serverDashboard.lastUpdated) {
+            setLastUpdated(prev => prev || serverDashboard.lastUpdated);
+          }
+        }
+      })
+      .catch(() => {});
+
+    // Connect to Server-Sent Events (SSE) for instant cross-device updates
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource('/api/realtime');
+      eventSource.onmessage = (event) => {
+        if (!isMounted || !event.data) return;
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === 'init') {
+            if (payload.remarks && typeof payload.remarks === 'object') {
+              setRemarks(prev => ({ ...payload.remarks, ...prev }));
+            }
+            if (payload.productionLines && typeof payload.productionLines === 'object') {
+              setProductionLines(prev => ({ ...payload.productionLines, ...prev }));
+            }
+            if (payload.dashboard?.data && Array.isArray(payload.dashboard.data)) {
+              setData(prev => (prev && prev.length > 0 ? prev : payload.dashboard.data));
+            }
+          } else if (payload.type === 'remark' && payload.id) {
+            setRemarks(prev => {
+              const next = { ...prev, [payload.id]: { text: payload.text, updatedAt: payload.updatedAt } };
+              try {
+                localStorage.setItem('production_dashboard_remarks', JSON.stringify(next));
+              } catch (e) {}
+              return next;
+            });
+          } else if (payload.type === 'remarks_batch' && payload.remarks) {
+            setRemarks(prev => {
+              const merged = { ...prev, ...payload.remarks };
+              try {
+                localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+              } catch (e) {}
+              return merged;
+            });
+          } else if (payload.type === 'production_line' && payload.id) {
+            setProductionLines(prev => {
+              const next = { ...prev, [payload.id]: { text: payload.text, updatedAt: payload.updatedAt } };
+              try {
+                localStorage.setItem('production_dashboard_production_lines', JSON.stringify(next));
+              } catch (e) {}
+              return next;
+            });
+          } else if (payload.type === 'production_lines_batch' && payload.lines) {
+            setProductionLines(prev => {
+              const merged = { ...prev, ...payload.lines };
+              try {
+                localStorage.setItem('production_dashboard_production_lines', JSON.stringify(merged));
+              } catch (e) {}
+              return merged;
+            });
+          } else if (payload.type === 'dashboard' && payload.data) {
+            setData(payload.data);
+            if (payload.lastUpdated) setLastUpdated(payload.lastUpdated);
+          }
+        } catch (e) {}
+      };
+    } catch (e) {}
+
+    // Auto-recover from localStorage (offline fallback)
     try {
       const dataKeys = ['production_dashboard_data', 'production_data', 'dashboard_data', 'orders_data', 'excel_data'];
       const remarkKeys = ['production_dashboard_remarks', 'remarks', 'app_remarks'];
+      const lineKeys = ['production_dashboard_production_lines', 'production_lines', 'app_production_lines'];
 
       let recoveredData: ProductionOrder[] | null = null;
       for (const k of dataKeys) {
@@ -724,26 +972,34 @@ export function Dashboard() {
         }
       }
 
-      if (recoveredData) {
-        setData(prev => (prev && prev.length > 0) ? prev : recoveredData);
-        // Sync to server backup if state was empty
-        fetch('/api/dashboard', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: recoveredData, lastUpdated: Date.now(), uploadId: 'local_recovery' })
-        }).catch(() => {});
+      let recoveredLines: Record<string, { text: string; updatedAt: number | null }> = {};
+      for (const k of lineKeys) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          try {
+            const p = JSON.parse(val);
+            if (p && typeof p === 'object') {
+              recoveredLines = { ...recoveredLines, ...p };
+            }
+          } catch (e) {}
+        }
       }
 
+      if (recoveredData) {
+        setData(prev => (prev && prev.length > 0 ? prev : recoveredData));
+      }
       if (Object.keys(recoveredRemarks).length > 0) {
         setRemarks(prev => ({ ...recoveredRemarks, ...prev }));
-        // Sync to server backup
-        fetch('/api/remarks/batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ remarks: recoveredRemarks })
-        }).catch(() => {});
+      }
+      if (Object.keys(recoveredLines).length > 0) {
+        setProductionLines(prev => ({ ...recoveredLines, ...prev }));
       }
     } catch (e) {}
+
+    return () => {
+      isMounted = false;
+      eventSource?.close();
+    };
   }, []);
 
   const handleRemarkChange = async (id: string, text: string) => {
@@ -780,6 +1036,42 @@ export function Dashboard() {
 
     // 3. Optional: Sync to Server API for redundancy
     fetch('/api/remarks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, text, updatedAt: updated })
+    }).catch(() => {});
+  };
+
+  const handleProductionLineChange = async (id: string, text: string) => {
+    const updated = Date.now();
+    const lineData = { text, updatedAt: updated };
+    
+    setProductionLines(prev => {
+      const next = { ...prev, [id]: lineData };
+      try {
+        localStorage.setItem('production_dashboard_production_lines', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+
+    try {
+      const linesRef = doc(db, 'production_lines_v2', 'all');
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(linesRef);
+        if (!snap.exists()) {
+          transaction.set(linesRef, { [id]: lineData });
+        } else {
+          transaction.update(linesRef, { [id]: lineData });
+        }
+      });
+    } catch (err) {
+      console.warn('Firestore Transaction Failed for production line:', err);
+      try {
+        await setDoc(doc(db, 'production_lines', id), lineData);
+      } catch (e) {}
+    }
+
+    fetch('/api/production-lines', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, text, updatedAt: updated })
@@ -1332,6 +1624,7 @@ export function Dashboard() {
       'Cum CTN Qty': Number(item.cumCTNQty) || 0,
       'Status': item.statusText,
       'Remark': getRowRemark(item, remarks, normalizedRemarksMap).text,
+      'Production Lines': getRowProductionLine(item, productionLines).text,
       'Delivered Qty': Number(item.deliveredQty) || 0
     }));
 
@@ -1343,7 +1636,7 @@ export function Dashboard() {
       { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
-      { wch: 15 }, { wch: 30 }, { wch: 15 }
+      { wch: 15 }, { wch: 30 }, { wch: 20 }, { wch: 15 }
     ];
     worksheet['!cols'] = colWidths;
 
@@ -1668,13 +1961,14 @@ export function Dashboard() {
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum CTN Qty</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">Status</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Remark</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Production Lines</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right truncate">Delivered Qty</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paddingTop > 0 && (
                     <tr className="border-0 p-0 m-0">
-                      <td colSpan={18} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                      <td colSpan={19} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                     </tr>
                   )}
                   {virtualRows.length > 0 ? (
@@ -1724,20 +2018,27 @@ export function Dashboard() {
                               onSave={handleRemarkChange}
                             />
                           </td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
+                            <ProductionLineInput 
+                              initialValue={getRowProductionLine(row, productionLines).text}
+                              rowId={row.id}
+                              onSave={handleProductionLineChange}
+                            />
+                          </td>
                           <td className="px-3 py-2 border-b border-slate-200 text-right font-medium text-slate-900 whitespace-nowrap truncate">{row.deliveredQty?.toLocaleString() || "0"}</td>
                         </tr>
                       );
                     })
                   ) : (
                     <tr>
-                      <td colSpan={18} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
+                      <td colSpan={19} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
                         No orders found matching the current filters.
                       </td>
                     </tr>
                   )}
                   {paddingBottom > 0 && (
                     <tr className="border-0 p-0 m-0">
-                      <td colSpan={18} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                      <td colSpan={19} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                     </tr>
                   )}
                 </tbody>
@@ -1806,12 +2107,17 @@ export function Dashboard() {
                           </div>
                         </div>
 
-                        <div className="mt-auto">
+                        <div className="mt-auto space-y-1.5">
                           <RemarkInput 
                             initialValue={getRowRemark(row, remarks, normalizedRemarksMap).text}
                             updatedAt={getRowRemark(row, remarks, normalizedRemarksMap).updatedAt}
                             rowId={row.id}
                             onSave={handleRemarkChange}
+                          />
+                          <ProductionLineInput 
+                            initialValue={getRowProductionLine(row, productionLines).text}
+                            rowId={row.id}
+                            onSave={handleProductionLineChange}
                           />
                         </div>
                       </div>
@@ -1841,6 +2147,7 @@ export function Dashboard() {
         onClose={() => setShowPrintModal(false)}
         data={filteredItems.length > 0 ? filteredItems : (data || [])}
         remarks={remarks}
+        productionLines={productionLines}
         activeFilters={{
           search: searchTerm,
           buyers: filterBuyer,
@@ -1864,19 +2171,72 @@ export function Dashboard() {
         initialBuyers={filterBuyer}
       />
 
-      <div className="mt-8 text-[10px] text-slate-300 text-center pb-4 opacity-50 hover:opacity-100 transition-opacity flex flex-col items-center gap-2">
-        <div>
-          Database Status: {Object.keys(remarks).length} active remarks synced • 
-          Data Window: {sixWeekWindow.start.toLocaleDateString()} - {sixWeekWindow.end.toLocaleDateString()}
+      <div className="mt-8 text-[11px] text-slate-400 text-center pb-4 flex flex-col items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-center font-medium">
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
+            {Object.keys(remarks).length} Active Remarks Synced
+          </span>
+          <span className="text-slate-300">•</span>
+          <span>Window: {sixWeekWindow.start.toLocaleDateString()} - {sixWeekWindow.end.toLocaleDateString()}</span>
         </div>
+        
+        {recoveryMessage && (
+          <div className="text-xs font-semibold px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 animate-fade-in">
+            {recoveryMessage}
+          </div>
+        )}
+
         <button 
+          disabled={isRecovering}
           onClick={async () => {
-            sessionStorage.removeItem('migration_done');
-            window.location.reload();
+            setIsRecovering(true);
+            setRecoveryMessage("Restoring remarks and orders from server database...");
+            try {
+              sessionStorage.removeItem('migration_done');
+              
+              // 1. Fetch remarks from server backup
+              const remarksRes = await fetch('/api/remarks');
+              const serverRemarks = await remarksRes.json();
+              
+              if (serverRemarks && typeof serverRemarks === 'object') {
+                const count = Object.keys(serverRemarks).length;
+                setRemarks(prev => {
+                  const merged = { ...serverRemarks, ...prev };
+                  try {
+                    localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+                  } catch (e) {}
+                  return merged;
+                });
+
+                // 2. Sync to Firestore remarks_v2/all
+                const remarksRef = doc(db, 'remarks_v2', 'all');
+                await setDoc(remarksRef, serverRemarks, { merge: true });
+                setRecoveryMessage(`Sync Complete! Successfully restored ${count} remarks across active weeks.`);
+              }
+
+              // 3. Fetch dashboard if needed
+              const dashRes = await fetch('/api/dashboard');
+              const serverDash = await dashRes.json();
+              if (serverDash?.data && Array.isArray(serverDash.data) && serverDash.data.length > 0) {
+                setData(serverDash.data);
+                if (serverDash.lastUpdated) setLastUpdated(serverDash.lastUpdated);
+                try {
+                  localStorage.setItem('production_dashboard_data', JSON.stringify(serverDash.data));
+                } catch (e) {}
+              }
+
+              setTimeout(() => setRecoveryMessage(null), 6000);
+            } catch (err: any) {
+              setRecoveryMessage(`Recovery warning: ${err.message || 'Check connection'}`);
+              setTimeout(() => setRecoveryMessage(null), 5000);
+            } finally {
+              setIsRecovering(false);
+            }
           }}
-          className="px-2 py-0.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-400"
+          className="px-3 py-1 border border-slate-300 hover:border-indigo-400 bg-white hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-medium shadow-sm transition-all disabled:opacity-50"
         >
-          Force Sync Recovery
+          {isRecovering ? "Syncing..." : "Force Sync Recovery"}
         </button>
       </div>
     </div>

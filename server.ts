@@ -19,6 +19,7 @@ if (!fs.existsSync(DATA_DIR)) {
 
 const DASHBOARD_FILE = path.join(DATA_DIR, 'dashboard.json');
 const REMARKS_FILE = path.join(DATA_DIR, 'remarks.json');
+const PROD_LINES_FILE = path.join(DATA_DIR, 'production_lines.json');
 
 // In-memory caches for maximum speed across all connected PCs
 let cachedDashboard: { data: any[] | null; lastUpdated: number | null; uploadId: string | null } = {
@@ -28,6 +29,7 @@ let cachedDashboard: { data: any[] | null; lastUpdated: number | null; uploadId:
 };
 
 let cachedRemarks: Record<string, { text: string; updatedAt: number | null }> = {};
+let cachedProductionLines: Record<string, { text: string; updatedAt: number | null }> = {};
 
 // Active SSE client connections for instant multi-PC real-time sync
 const sseClients = new Set<express.Response>();
@@ -62,6 +64,15 @@ try {
   console.error('Error reading remarks file:', e);
 }
 
+try {
+  if (fs.existsSync(PROD_LINES_FILE)) {
+    const raw = fs.readFileSync(PROD_LINES_FILE, 'utf-8');
+    cachedProductionLines = JSON.parse(raw);
+  }
+} catch (e) {
+  console.error('Error reading production lines file:', e);
+}
+
 // Real-time Server-Sent Events endpoint
 app.get('/api/realtime', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -73,7 +84,12 @@ app.get('/api/realtime', (req, res) => {
   sseClients.add(res);
 
   // Send current state immediately on connection
-  res.write(`data: ${JSON.stringify({ type: 'init', dashboard: cachedDashboard, remarks: cachedRemarks })}\n\n`);
+  res.write(`data: ${JSON.stringify({ 
+    type: 'init', 
+    dashboard: cachedDashboard, 
+    remarks: cachedRemarks,
+    productionLines: cachedProductionLines 
+  })}\n\n`);
 
   // Heartbeat ping every 15s to keep proxy/Cloud Run connections alive
   const pingTimer = setInterval(() => {
@@ -146,6 +162,43 @@ app.post('/api/remarks/batch', (req, res) => {
     res.json({ success: true });
   } catch (err: any) {
     console.error('Error saving batch remarks:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/production-lines', (req, res) => {
+  res.json(cachedProductionLines);
+});
+
+app.post('/api/production-lines', (req, res) => {
+  try {
+    const { id, text, updatedAt } = req.body;
+    if (id) {
+      cachedProductionLines[id] = {
+        text: text || '',
+        updatedAt: updatedAt || Date.now(),
+      };
+      fs.writeFileSync(PROD_LINES_FILE, JSON.stringify(cachedProductionLines));
+      broadcast({ type: 'production_line', id, text: text || '', updatedAt: cachedProductionLines[id].updatedAt });
+    }
+    res.json({ success: true, id });
+  } catch (err: any) {
+    console.error('Error saving production line:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/production-lines/batch', (req, res) => {
+  try {
+    const { lines } = req.body;
+    if (lines && typeof lines === 'object') {
+      Object.assign(cachedProductionLines, lines);
+      fs.writeFileSync(PROD_LINES_FILE, JSON.stringify(cachedProductionLines));
+      broadcast({ type: 'production_lines_batch', lines: cachedProductionLines });
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('Error saving batch production lines:', err);
     res.status(500).json({ error: err.message });
   }
 });

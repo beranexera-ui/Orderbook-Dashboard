@@ -7,6 +7,7 @@ interface PrintOrientationModalProps {
   onClose: () => void;
   data: ProductionOrder[];
   remarks: Record<string, { text: string; updatedAt: number | null }>;
+  productionLines?: Record<string, { text: string; updatedAt: number | null }>;
   activeFilters?: {
     search?: string;
     buyers?: string[];
@@ -24,6 +25,7 @@ export function PrintOrientationModal({
   onClose,
   data,
   remarks,
+  productionLines = {},
   activeFilters
 }: PrintOrientationModalProps) {
   const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('landscape');
@@ -139,6 +141,7 @@ export function PrintOrientationModal({
           ? `${item.colorCode}-${item.colorName}`
           : (item.colorCode || item.colorName || '-');
         const remark = remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '';
+        const prodLine = productionLines?.[item.id]?.text || productionLines?.[item.legacyId || '']?.text || '';
 
         return `
           <tr>
@@ -152,6 +155,7 @@ export function PrintOrientationModal({
             <td style="font-weight: 800; text-align: center; white-space: nowrap;">${item.scheduleNo || '-'}</td>
             <td style="text-align: center; white-space: nowrap;">${item.shipmentMode || '-'}</td>
             <td style="text-align: left; word-break: break-word;">${remark}</td>
+            <td style="text-align: center; white-space: nowrap; font-weight: 600;">${prodLine}</td>
           </tr>
         `;
       }).join('');
@@ -161,7 +165,7 @@ export function PrintOrientationModal({
           <!-- Subtle separator space between different VPOs -->
           ${gIdx > 0 ? `
           <tr class="vpo-spacer-row">
-            <td colspan="10"></td>
+            <td colspan="11"></td>
           </tr>
           ` : ''}
 
@@ -450,6 +454,7 @@ export function PrintOrientationModal({
         <th style="text-align: center; white-space: nowrap;">Schedule</th>
         <th style="text-align: center; white-space: nowrap;">Mode</th>
         <th style="text-align: center; white-space: nowrap;">Remarks</th>
+        <th style="text-align: center; white-space: nowrap;">Production Lines</th>
       </tr>
     </thead>
     ${tableBodiesHTML}
@@ -461,7 +466,7 @@ export function PrintOrientationModal({
         <td style="text-align: center; font-weight: 900; white-space: nowrap;">
           ${totals.totalCO.toLocaleString()}
         </td>
-        <td colspan="7" style="text-align: left; font-size: 8.5pt; color: #333;">
+        <td colspan="8" style="text-align: left; font-size: 8.5pt; color: #333;">
           (${totals.count} Lines &bull; ${totals.vpoCount} VPOs &bull; ${totals.buyersCount} Buyers)
         </td>
       </tr>
