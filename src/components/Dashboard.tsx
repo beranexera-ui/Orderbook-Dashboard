@@ -128,6 +128,7 @@ export interface ProductionOrder {
   packMethod: string;
   scheduleNo: string;
   planDelDate: string;
+  ped?: string;
   weekNo: string;
   coQty: number;
   cumSewInQty: number;
@@ -359,6 +360,7 @@ function ProductionLineInput({
 
 const TABLE_COLUMN_WIDTHS = [
   '120px', // Plan Del Date
+  '110px', // PED
   '90px',  // WEEK NO
   '130px', // Buyer
   '140px', // Style No
@@ -1300,6 +1302,23 @@ export function Dashboard() {
               }
             }
 
+            const rawPED = getVal(row, ['PED', 'ped', 'Ped', 'P.E.D.']);
+            const parsedPEDDate = parseExcelDate(rawPED);
+            let pedStr = '';
+            if (parsedPEDDate) {
+              const y = parsedPEDDate.getFullYear();
+              const m = String(parsedPEDDate.getMonth() + 1).padStart(2, '0');
+              const d = String(parsedPEDDate.getDate()).padStart(2, '0');
+              pedStr = `${y}/${m}/${d}`;
+            } else {
+              const strVal = String(rawPED || '').trim();
+              if (/^\d{8}$/.test(strVal)) {
+                pedStr = `${strVal.substring(0, 4)}/${strVal.substring(4, 6)}/${strVal.substring(6, 8)}`;
+              } else {
+                pedStr = strVal;
+              }
+            }
+
             return {
               id: finalId,
               legacyId: legacyIdStr,
@@ -1316,6 +1335,7 @@ export function Dashboard() {
               packMethod: String(getVal(row, ['Pack Method', 'Pack Method ', 'pack method']) || '').trim(),
               scheduleNo: schedStr,
               planDelDate: planDelDate,
+              ped: pedStr,
               weekNo: weekNo,
               coQty: coQty,
               cumSewInQty: getNum(row, ['Cum Sew In Qty', 'Cum SewIn Qty']),
@@ -1618,6 +1638,7 @@ export function Dashboard() {
 
     const exportData = filteredItems.map(item => ({
       'Plan Del Date': item.planDelDate,
+      'PED': item.ped || '',
       'WEEK NO': item.weekNo,
       'Buyer': item.buyer,
       'Style No': item.styleNo,
@@ -1643,7 +1664,7 @@ export function Dashboard() {
     XLSX.utils.book_append_sheet(workbook, worksheet, "Production Data");
     
     const colWidths = [
-      { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
+      { wch: 15 }, { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 30 }, { wch: 20 }, { wch: 15 }
@@ -1946,7 +1967,7 @@ export function Dashboard() {
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div ref={tableContainerRef} className="overflow-auto max-h-[75vh]">
             {!isMobile ? (
-              <table className="w-full min-w-[2180px] table-fixed text-sm text-left border-collapse relative">
+              <table className="w-full min-w-[2290px] table-fixed text-sm text-left border-collapse relative">
                 <colgroup>
                   {TABLE_COLUMN_WIDTHS.map((width, idx) => (
                     <col key={idx} style={{ width }} />
@@ -1955,6 +1976,7 @@ export function Dashboard() {
                 <thead className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold bg-slate-50/90 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-20 shadow-sm">
                   <tr className="h-[44px]">
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Plan Del Date</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">PED</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">WEEK NO</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Buyer</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Style No</th>
@@ -1978,7 +2000,7 @@ export function Dashboard() {
                 <tbody>
                   {paddingTop > 0 && (
                     <tr className="border-0 p-0 m-0">
-                      <td colSpan={19} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                      <td colSpan={20} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                     </tr>
                   )}
                   {virtualRows.length > 0 ? (
@@ -1994,6 +2016,7 @@ export function Dashboard() {
                           )}
                         >
                           <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate">{row.planDelDate}</td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap text-center font-medium bg-slate-50/50 truncate">{row.ped || '-'}</td>
                           <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap text-center font-medium bg-slate-50/50 truncate">{row.weekNo}</td>
                           <td className="px-3 py-2 border-r border-b border-slate-200 text-slate-700 whitespace-nowrap truncate" title={row.buyer}>{row.buyer}</td>
                           <td className="px-3 py-2 border-r border-b border-slate-200 font-medium text-slate-900 whitespace-nowrap truncate" title={row.styleNo}>{row.styleNo}</td>
@@ -2041,14 +2064,14 @@ export function Dashboard() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={19} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
+                      <td colSpan={20} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
                         No orders found matching the current filters.
                       </td>
                     </tr>
                   )}
                   {paddingBottom > 0 && (
                     <tr className="border-0 p-0 m-0">
-                      <td colSpan={19} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                      <td colSpan={20} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                     </tr>
                   )}
                 </tbody>
@@ -2106,6 +2129,10 @@ export function Dashboard() {
                           <div className="flex justify-between border-b border-slate-50 pb-0.5">
                             <span className="text-slate-400">Del Date:</span>
                             <span className="font-semibold text-slate-700">{row.planDelDate}</span>
+                          </div>
+                          <div className="flex justify-between border-b border-slate-50 pb-0.5">
+                            <span className="text-slate-400">PED:</span>
+                            <span className="font-semibold text-slate-700">{row.ped || '-'}</span>
                           </div>
                           <div className="flex justify-between border-b border-slate-50 pb-0.5">
                             <span className="text-slate-400">CO Qty:</span>

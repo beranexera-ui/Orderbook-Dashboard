@@ -146,6 +146,7 @@ export function PrintOrientationModal({
         return `
           <tr>
             <td style="text-align: center; white-space: nowrap;">${item.planDelDate || '-'}</td>
+            <td style="text-align: center; white-space: nowrap;">${item.ped || '-'}</td>
             <td style="text-align: center; white-space: nowrap;">${item.weekNo || '-'}</td>
             <td style="text-align: center; white-space: nowrap;">${co > 0 ? co.toLocaleString() : '-'}</td>
             <td style="text-align: center; white-space: nowrap;">${item.styleNo || '-'}</td>
@@ -165,7 +166,7 @@ export function PrintOrientationModal({
           <!-- Subtle separator space between different VPOs -->
           ${gIdx > 0 ? `
           <tr class="vpo-spacer-row">
-            <td colspan="11"></td>
+            <td colspan="12"></td>
           </tr>
           ` : ''}
 
@@ -445,6 +446,7 @@ export function PrintOrientationModal({
     <thead>
       <tr>
         <th style="text-align: center; white-space: nowrap;">Plan Del Date</th>
+        <th style="text-align: center; white-space: nowrap;">PED</th>
         <th style="text-align: center; white-space: nowrap;">WEEK NO</th>
         <th style="text-align: center; white-space: nowrap;">Order Qty</th>
         <th style="text-align: center; white-space: nowrap;">Style</th>
@@ -460,7 +462,7 @@ export function PrintOrientationModal({
     ${tableBodiesHTML}
     <tfoot>
       <tr class="grand-total-row">
-        <td colspan="2" style="text-align: right; text-transform: uppercase;">
+        <td colspan="3" style="text-align: right; text-transform: uppercase;">
           OVERALL TOTAL:
         </td>
         <td style="text-align: center; font-weight: 900; white-space: nowrap;">
