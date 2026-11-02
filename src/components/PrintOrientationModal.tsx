@@ -17,6 +17,7 @@ interface PrintOrientationModalProps {
     destinations?: string[];
     packMethods?: string[];
     remarksFilter?: string[];
+    peds?: string[];
   };
 }
 
@@ -66,6 +67,7 @@ export function PrintOrientationModal({
     if (activeFilters.destinations && activeFilters.destinations.length > 0) list.push(`Destination: ${activeFilters.destinations.join(', ')}`);
     if (activeFilters.packMethods && activeFilters.packMethods.length > 0) list.push(`Pack Method: ${activeFilters.packMethods.join(', ')}`);
     if (activeFilters.remarksFilter && activeFilters.remarksFilter.length > 0) list.push(`Remark: ${activeFilters.remarksFilter.join(', ')}`);
+    if (activeFilters.peds && activeFilters.peds.length > 0) list.push(`PED: ${activeFilters.peds.join(', ')}`);
     return list;
   }, [activeFilters]);
 
