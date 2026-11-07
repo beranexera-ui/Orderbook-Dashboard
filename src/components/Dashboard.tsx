@@ -582,8 +582,8 @@ const TABLE_COLUMN_WIDTHS = [
   '125px', // Cum SewOut Qty
   '115px', // Cum CTN Qty
   '115px', // Status
-  '200px', // CIF Offering
   '220px', // Remark
+  '200px', // CIF Offering
   '135px', // Production Lines
   '115px', // Delivered Qty
 ];
@@ -2066,8 +2066,8 @@ export function Dashboard() {
       'Cum SewOut Qty': Number(item.cumSewOutQty) || 0,
       'Cum CTN Qty': Number(item.cumCTNQty) || 0,
       'Status': item.statusText,
-      'CIF Offering': getRowCifOffering(item, cifOfferings, normalizedCifOfferingsMap).text,
       'Remark': getRowRemark(item, remarks, normalizedRemarksMap).text,
+      'CIF Offering': getRowCifOffering(item, cifOfferings, normalizedCifOfferingsMap).text,
       'Production Lines': getRowProductionLine(item, productionLines).text,
       'Delivered Qty': Number(item.deliveredQty) || 0
     }));
@@ -2080,7 +2080,7 @@ export function Dashboard() {
       { wch: 15 }, { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
-      { wch: 15 }, { wch: 25 }, { wch: 30 }, { wch: 20 }, { wch: 15 }
+      { wch: 15 }, { wch: 30 }, { wch: 25 }, { wch: 20 }, { wch: 15 }
     ];
     worksheet['!cols'] = colWidths;
 
@@ -2419,8 +2419,8 @@ export function Dashboard() {
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum SewOut Qty</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum CTN Qty</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">Status</th>
-                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">CIF Offering</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Remark</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">CIF Offering</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Production Lines</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right truncate">Delivered Qty</th>
                   </tr>
@@ -2472,19 +2472,19 @@ export function Dashboard() {
                             </span>
                           </td>
                           <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
-                            <CifOfferingInput 
-                              initialValue={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).text}
-                              updatedAt={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).updatedAt}
-                              rowId={row.id}
-                              onSave={handleCifOfferingChange}
-                            />
-                          </td>
-                          <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
                             <RemarkInput 
                               initialValue={getRowRemark(row, remarks, normalizedRemarksMap).text}
                               updatedAt={getRowRemark(row, remarks, normalizedRemarksMap).updatedAt}
                               rowId={row.id}
                               onSave={handleRemarkChange}
+                            />
+                          </td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
+                            <CifOfferingInput 
+                              initialValue={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).text}
+                              updatedAt={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).updatedAt}
+                              rowId={row.id}
+                              onSave={handleCifOfferingChange}
                             />
                           </td>
                           <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
@@ -2581,17 +2581,17 @@ export function Dashboard() {
                         </div>
 
                         <div className="mt-auto space-y-1.5">
-                          <CifOfferingInput 
-                            initialValue={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).text}
-                            updatedAt={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).updatedAt}
-                            rowId={row.id}
-                            onSave={handleCifOfferingChange}
-                          />
                           <RemarkInput 
                             initialValue={getRowRemark(row, remarks, normalizedRemarksMap).text}
                             updatedAt={getRowRemark(row, remarks, normalizedRemarksMap).updatedAt}
                             rowId={row.id}
                             onSave={handleRemarkChange}
+                          />
+                          <CifOfferingInput 
+                            initialValue={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).text}
+                            updatedAt={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).updatedAt}
+                            rowId={row.id}
+                            onSave={handleCifOfferingChange}
                           />
                           <ProductionLineInput 
                             initialValue={getRowProductionLine(row, productionLines).text}

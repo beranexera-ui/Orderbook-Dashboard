@@ -162,8 +162,8 @@ export function PrintOrientationModal({
             <td style="text-align: center; white-space: nowrap;">${colorDisplay}</td>
             <td style="font-weight: 800; text-align: center; white-space: nowrap;">${item.scheduleNo || '-'}</td>
             <td style="text-align: center; white-space: nowrap;">${item.shipmentMode || '-'}</td>
-            <td style="text-align: left; word-break: break-word;">${cifOffering}</td>
             <td style="text-align: left; word-break: break-word;">${remark}</td>
+            <td style="text-align: left; word-break: break-word;">${cifOffering}</td>
             <td style="text-align: center; white-space: nowrap; font-weight: 600;">${prodLine}</td>
           </tr>
         `;
@@ -463,8 +463,8 @@ export function PrintOrientationModal({
         <th style="text-align: center; white-space: nowrap;">Color Name</th>
         <th style="text-align: center; white-space: nowrap;">Schedule</th>
         <th style="text-align: center; white-space: nowrap;">Mode</th>
-        <th style="text-align: center; white-space: nowrap;">CIF Offering</th>
         <th style="text-align: center; white-space: nowrap;">Remarks</th>
+        <th style="text-align: center; white-space: nowrap;">CIF Offering</th>
         <th style="text-align: center; white-space: nowrap;">Production Lines</th>
       </tr>
     </thead>
