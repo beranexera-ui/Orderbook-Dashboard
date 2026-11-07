@@ -20,6 +20,7 @@ if (!fs.existsSync(DATA_DIR)) {
 const DASHBOARD_FILE = path.join(DATA_DIR, 'dashboard.json');
 const REMARKS_FILE = path.join(DATA_DIR, 'remarks.json');
 const PROD_LINES_FILE = path.join(DATA_DIR, 'production_lines.json');
+const CIF_OFFERINGS_FILE = path.join(DATA_DIR, 'cif_offerings.json');
 
 // In-memory caches for maximum speed across all connected PCs
 let cachedDashboard: { data: any[] | null; lastUpdated: number | null; uploadId: string | null } = {
@@ -30,6 +31,7 @@ let cachedDashboard: { data: any[] | null; lastUpdated: number | null; uploadId:
 
 let cachedRemarks: Record<string, { text: string; updatedAt: number | null }> = {};
 let cachedProductionLines: Record<string, { text: string; updatedAt: number | null }> = {};
+let cachedCifOfferings: Record<string, { text: string; updatedAt: number | null }> = {};
 
 // Active SSE client connections for instant multi-PC real-time sync
 const sseClients = new Set<express.Response>();
@@ -73,6 +75,15 @@ try {
   console.error('Error reading production lines file:', e);
 }
 
+try {
+  if (fs.existsSync(CIF_OFFERINGS_FILE)) {
+    const raw = fs.readFileSync(CIF_OFFERINGS_FILE, 'utf-8');
+    cachedCifOfferings = JSON.parse(raw);
+  }
+} catch (e) {
+  console.error('Error reading cif offerings file:', e);
+}
+
 // Real-time Server-Sent Events endpoint
 app.get('/api/realtime', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -88,7 +99,8 @@ app.get('/api/realtime', (req, res) => {
     type: 'init', 
     dashboard: cachedDashboard, 
     remarks: cachedRemarks,
-    productionLines: cachedProductionLines 
+    productionLines: cachedProductionLines,
+    cifOfferings: cachedCifOfferings
   })}\n\n`);
 
   // Heartbeat ping every 15s to keep proxy/Cloud Run connections alive
@@ -199,6 +211,43 @@ app.post('/api/production-lines/batch', (req, res) => {
     res.json({ success: true });
   } catch (err: any) {
     console.error('Error saving batch production lines:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/cif-offerings', (req, res) => {
+  res.json(cachedCifOfferings);
+});
+
+app.post('/api/cif-offerings', (req, res) => {
+  try {
+    const { id, text, updatedAt } = req.body;
+    if (id) {
+      cachedCifOfferings[id] = {
+        text: text || '',
+        updatedAt: updatedAt || Date.now(),
+      };
+      fs.writeFileSync(CIF_OFFERINGS_FILE, JSON.stringify(cachedCifOfferings));
+      broadcast({ type: 'cif_offering', id, text: text || '', updatedAt: cachedCifOfferings[id].updatedAt });
+    }
+    res.json({ success: true, id });
+  } catch (err: any) {
+    console.error('Error saving CIF offering:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/cif-offerings/batch', (req, res) => {
+  try {
+    const { cifOfferings } = req.body;
+    if (cifOfferings && typeof cifOfferings === 'object') {
+      Object.assign(cachedCifOfferings, cifOfferings);
+      fs.writeFileSync(CIF_OFFERINGS_FILE, JSON.stringify(cachedCifOfferings));
+      broadcast({ type: 'cif_offerings_batch', cifOfferings: cachedCifOfferings });
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('Error saving batch CIF offerings:', err);
     res.status(500).json({ error: err.message });
   }
 });

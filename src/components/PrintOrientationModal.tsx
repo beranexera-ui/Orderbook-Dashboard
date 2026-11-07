@@ -7,6 +7,7 @@ interface PrintOrientationModalProps {
   onClose: () => void;
   data: ProductionOrder[];
   remarks: Record<string, { text: string; updatedAt: number | null }>;
+  cifOfferings?: Record<string, { text: string; updatedAt: number | null }>;
   productionLines?: Record<string, { text: string; updatedAt: number | null }>;
   activeFilters?: {
     search?: string;
@@ -16,6 +17,7 @@ interface PrintOrientationModalProps {
     shipmentModes?: string[];
     destinations?: string[];
     packMethods?: string[];
+    cifOfferingsFilter?: string[];
     remarksFilter?: string[];
     peds?: string[];
   };
@@ -26,6 +28,7 @@ export function PrintOrientationModal({
   onClose,
   data,
   remarks,
+  cifOfferings = {},
   productionLines = {},
   activeFilters
 }: PrintOrientationModalProps) {
@@ -66,6 +69,7 @@ export function PrintOrientationModal({
     if (activeFilters.shipmentModes && activeFilters.shipmentModes.length > 0) list.push(`Shipment: ${activeFilters.shipmentModes.join(', ')}`);
     if (activeFilters.destinations && activeFilters.destinations.length > 0) list.push(`Destination: ${activeFilters.destinations.join(', ')}`);
     if (activeFilters.packMethods && activeFilters.packMethods.length > 0) list.push(`Pack Method: ${activeFilters.packMethods.join(', ')}`);
+    if (activeFilters.cifOfferingsFilter && activeFilters.cifOfferingsFilter.length > 0) list.push(`CIF Offering: ${activeFilters.cifOfferingsFilter.join(', ')}`);
     if (activeFilters.remarksFilter && activeFilters.remarksFilter.length > 0) list.push(`Remark: ${activeFilters.remarksFilter.join(', ')}`);
     if (activeFilters.peds && activeFilters.peds.length > 0) list.push(`PED: ${activeFilters.peds.join(', ')}`);
     return list;
@@ -142,6 +146,7 @@ export function PrintOrientationModal({
         const colorDisplay = item.colorCode && item.colorName
           ? `${item.colorCode}-${item.colorName}`
           : (item.colorCode || item.colorName || '-');
+        const cifOffering = cifOfferings[item.id]?.text || cifOfferings[item.legacyId || '']?.text || '';
         const remark = remarks[item.id]?.text || remarks[item.legacyId || '']?.text || '';
         const prodLine = productionLines?.[item.id]?.text || productionLines?.[item.legacyId || '']?.text || '';
 
@@ -157,6 +162,7 @@ export function PrintOrientationModal({
             <td style="text-align: center; white-space: nowrap;">${colorDisplay}</td>
             <td style="font-weight: 800; text-align: center; white-space: nowrap;">${item.scheduleNo || '-'}</td>
             <td style="text-align: center; white-space: nowrap;">${item.shipmentMode || '-'}</td>
+            <td style="text-align: left; word-break: break-word;">${cifOffering}</td>
             <td style="text-align: left; word-break: break-word;">${remark}</td>
             <td style="text-align: center; white-space: nowrap; font-weight: 600;">${prodLine}</td>
           </tr>
@@ -168,7 +174,7 @@ export function PrintOrientationModal({
           <!-- Subtle separator space between different VPOs -->
           ${gIdx > 0 ? `
           <tr class="vpo-spacer-row">
-            <td colspan="12"></td>
+            <td colspan="13"></td>
           </tr>
           ` : ''}
 
@@ -457,6 +463,7 @@ export function PrintOrientationModal({
         <th style="text-align: center; white-space: nowrap;">Color Name</th>
         <th style="text-align: center; white-space: nowrap;">Schedule</th>
         <th style="text-align: center; white-space: nowrap;">Mode</th>
+        <th style="text-align: center; white-space: nowrap;">CIF Offering</th>
         <th style="text-align: center; white-space: nowrap;">Remarks</th>
         <th style="text-align: center; white-space: nowrap;">Production Lines</th>
       </tr>
@@ -464,7 +471,7 @@ export function PrintOrientationModal({
     ${tableBodiesHTML}
     <tfoot>
       <tr class="grand-total-row">
-        <td colspan="3" style="text-align: right; text-transform: uppercase;">
+        <td colspan="4" style="text-align: right; text-transform: uppercase;">
           OVERALL TOTAL:
         </td>
         <td style="text-align: center; font-weight: 900; white-space: nowrap;">

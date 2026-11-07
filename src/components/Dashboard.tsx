@@ -137,6 +137,7 @@ export interface ProductionOrder {
   cumCTNQty: number;
   statusText: string;
   deliveredQty: number;
+  cifOffering?: string;
   remark?: string;
   productionLine?: string;
 }
@@ -303,6 +304,162 @@ function RemarkInput({
   );
 }
 
+function CifOfferingInput({
+  initialValue,
+  updatedAt,
+  rowId,
+  onSave
+}: {
+  initialValue: string;
+  updatedAt: number | null;
+  rowId: string;
+  onSave: (id: string, text: string) => void;
+}) {
+  const [value, setValue] = useState(initialValue);
+  const [isLocked, setIsLocked] = useState(initialValue.trim() !== "");
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [passcode, setPasscode] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setValue(initialValue);
+    setIsLocked(initialValue.trim() !== "");
+  }, [initialValue]);
+
+  const getTooltipInfo = () => {
+    if (!updatedAt || !initialValue.trim()) return undefined;
+    const date = new Date(updatedAt);
+    
+    const formattedDate = date.toLocaleString('en-US', { 
+       year: 'numeric', month: '2-digit', day: '2-digit', 
+       hour: '2-digit', minute: '2-digit', hour12: true 
+    });
+
+    const day = date.getDay();
+    const hour = date.getHours(); 
+    
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+
+    const morningShift = weekNo % 2 !== 0 ? 'A' : 'B';
+    const eveningShift = weekNo % 2 !== 0 ? 'B' : 'A';
+    
+    let currentShift = "Off-hours";
+    if (day !== 0) {
+       if (hour >= 6 && hour < 14) { 
+           currentShift = `Shift ${morningShift}`;
+       } else if (hour >= 14 && hour < 22) { 
+           currentShift = `Shift ${eveningShift}`;
+       }
+    } else {
+       currentShift = "Holiday (Sunday)";
+    }
+
+    return `Updated: ${formattedDate} | ${currentShift}`;
+  };
+
+  const handleDoubleClick = () => {
+    if (isLocked) {
+      setShowPrompt(true);
+      setPasscode("");
+      setErrorMsg("");
+    }
+  };
+
+  const handleUnlock = () => {
+    if (passcode === '1125') {
+      setIsLocked(false);
+      setShowPrompt(false);
+      setTimeout(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+        }
+      }, 50);
+    } else {
+      setErrorMsg("Incorrect passcode!");
+    }
+  };
+
+  return (
+    <>
+      <input 
+        ref={inputRef}
+        type="text" 
+        value={value}
+        readOnly={isLocked}
+        onDoubleClick={handleDoubleClick}
+        onChange={(e) => !isLocked && setValue(e.target.value)}
+        onBlur={() => {
+          if (!isLocked) {
+            if (value !== initialValue) {
+              onSave(rowId, value);
+            }
+            if (value.trim() !== "") {
+              setIsLocked(true);
+            }
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.currentTarget.blur();
+          }
+        }}
+        title={getTooltipInfo()}
+        placeholder={isLocked ? "" : "Add CIF Offering..."}
+        list="cif-offering-suggestions"
+        className={`w-full text-sm bg-transparent border-0 border-b px-1 py-1 transition-colors ${
+          isLocked 
+            ? 'border-transparent cursor-pointer hover:bg-slate-100/50 focus:ring-0 focus:outline-none font-medium text-slate-800' 
+            : 'border-slate-300 hover:border-slate-300 focus:border-indigo-500 focus:ring-0'
+        }`}
+      />
+      
+      {showPrompt && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white p-5 rounded-xl shadow-xl w-full max-w-xs border border-slate-200">
+            <h3 className="text-base font-bold text-slate-900 mb-1">Unlock CIF Offering</h3>
+            <p className="text-xs text-slate-500 mb-4">Enter passcode to edit this CIF Offering.</p>
+            <input 
+              type="password" 
+              autoFocus
+              value={passcode}
+              onChange={(e) => {
+                setPasscode(e.target.value);
+                setErrorMsg("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleUnlock();
+                if (e.key === 'Escape') setShowPrompt(false);
+              }}
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm mb-2"
+              placeholder="Enter passcode..."
+            />
+            {errorMsg && <p className="text-xs text-red-500 mb-2">{errorMsg}</p>}
+            <div className="flex justify-end gap-2 mt-4">
+              <button 
+                onClick={() => setShowPrompt(false)}
+                className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleUnlock}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
+              >
+                Unlock
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function ProductionLineInput({
   initialValue,
   rowId,
@@ -358,6 +515,55 @@ function ProductionLineInput({
   );
 }
 
+function getRowCifOffering(
+  item: ProductionOrder, 
+  cifMap: Record<string, { text: string; updatedAt?: number | null }>,
+  normalizedMap?: Map<string, { text: string; updatedAt: number | null }>
+): { text: string; updatedAt: number | null } {
+  if (!cifMap || typeof cifMap !== 'object') return { text: '', updatedAt: null };
+
+  const formatCif = (r: { text: string; updatedAt?: number | null } | undefined): { text: string; updatedAt: number | null } | null => {
+    if (!r || !r.text || r.text.trim() === '') return null;
+    return { text: r.text.trim(), updatedAt: r.updatedAt ?? null };
+  };
+
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // 1. Direct match on row.id
+  let res = formatCif(cifMap[item.id]);
+  if (res) return res;
+
+  // 2. Direct match on row.legacyId
+  if (item.legacyId) {
+    res = formatCif(cifMap[item.legacyId]);
+    if (res) return res;
+  }
+
+  // 3. Raw combined keys
+  const rawStable = `${item.vpoNo}_${item.scheduleNo}_${item.styleNo}_${item.colorCode}_${item.destination}`;
+  res = formatCif(cifMap[rawStable]);
+  if (res) return res;
+
+  const rawLegacy = `${item.vpoNo}_${item.scheduleNo}_${item.styleNo}_${item.colorCode}_${item.destination}_${item.planDelDate}`;
+  res = formatCif(cifMap[rawLegacy]);
+  if (res) return res;
+
+  // 4. Normalized fuzzy search
+  const normStable = normalize(rawStable);
+  const normLegacy = normalize(rawLegacy);
+  
+  if (normalizedMap) {
+    const found = normalizedMap.get(normStable) || normalizedMap.get(normLegacy);
+    if (found) return found;
+  }
+
+  if (item.cifOffering) {
+    return { text: item.cifOffering, updatedAt: null };
+  }
+
+  return { text: '', updatedAt: null };
+}
+
 const TABLE_COLUMN_WIDTHS = [
   '120px', // Plan Del Date
   '110px', // PED
@@ -376,6 +582,7 @@ const TABLE_COLUMN_WIDTHS = [
   '125px', // Cum SewOut Qty
   '115px', // Cum CTN Qty
   '115px', // Status
+  '200px', // CIF Offering
   '220px', // Remark
   '135px', // Production Lines
   '115px', // Delivered Qty
@@ -593,6 +800,7 @@ export function Dashboard() {
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [remarks, setRemarks] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
   const [productionLines, setProductionLines] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
+  const [cifOfferings, setCifOfferings] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
   
   // Pre-calculate normalized remarks map for fast fuzzy matching
   const normalizedRemarksMap = useMemo(() => {
@@ -615,6 +823,25 @@ export function Dashboard() {
     return map;
   }, [remarks]);
 
+  const normalizedCifOfferingsMap = useMemo(() => {
+    const map = new Map<string, { text: string; updatedAt: number | null }>();
+    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+    
+    Object.entries(cifOfferings).forEach(([id, data]) => {
+      const cifData = data as { text: string; updatedAt: number | null };
+      if (cifData.text && cifData.text.trim() !== '') {
+        const normKey = normalize(id);
+        if (normKey) {
+          const existing = map.get(normKey);
+          if (!existing || (cifData.updatedAt || 0) > (existing.updatedAt || 0)) {
+            map.set(normKey, { text: cifData.text.trim(), updatedAt: cifData.updatedAt || null });
+          }
+        }
+      }
+    });
+    return map;
+  }, [cifOfferings]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -629,6 +856,7 @@ export function Dashboard() {
   const [filterShipmentMode, setFilterShipmentMode] = useState<string[]>([]);
   const [filterDestination, setFilterDestination] = useState<string[]>([]);
   const [filterPackMethod, setFilterPackMethod] = useState<string[]>([]);
+  const [filterCifOffering, setFilterCifOffering] = useState<string[]>([]);
   const [filterRemark, setFilterRemark] = useState<string[]>([]);
   const [filterPED, setFilterPED] = useState<string[]>([]);
   const [filterProductionLine, setFilterProductionLine] = useState<string[]>([]);
@@ -752,6 +980,29 @@ export function Dashboard() {
       console.warn('Production lines sync error:', err);
     });
 
+    // Optimized CIF Offerings Sync
+    const unsubCifOfferings = onSnapshot(doc(db, 'cif_offerings_v2', 'all'), (snap) => {
+      if (snap.exists() && isMounted) {
+        const newCif = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
+        setCifOfferings(prev => {
+          const merged = { ...prev };
+          Object.entries(newCif).forEach(([id, data]) => {
+            if (data.text && data.text.trim() !== '') {
+              merged[id] = data;
+            } else if (!merged[id]) {
+              merged[id] = data;
+            }
+          });
+          try {
+            localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
+      }
+    }, (err) => {
+      console.warn('CIF offerings sync error:', err);
+    });
+
     // Recovery logic: Fetch from legacy 'remarks' collection if remarks are missing
     const recoverLegacyRemarks = async () => {
       try {
@@ -824,6 +1075,7 @@ export function Dashboard() {
       unsubDashboard();
       unsubRemarks();
       unsubProductionLines();
+      unsubCifOfferings();
     };
   }, []);
 
@@ -880,6 +1132,30 @@ export function Dashboard() {
       })
       .catch(() => {});
 
+    // Load CIF offerings immediately from server backup
+    fetch('/api/cif-offerings')
+      .then(res => safeJson(res))
+      .then((serverCif: Record<string, { text: string; updatedAt: number | null }> | null) => {
+        if (!isMounted || !serverCif || typeof serverCif !== 'object') return;
+        if (Object.keys(serverCif).length > 0) {
+          setCifOfferings(prev => {
+            const merged = { ...serverCif, ...prev };
+            try {
+              localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
+            } catch (e) {}
+            return merged;
+          });
+
+          const cifRef = doc(db, 'cif_offerings_v2', 'all');
+          getDoc(cifRef).then(snap => {
+            if (!snap.exists() || Object.keys(snap.data() || {}).length < Object.keys(serverCif).length) {
+              setDoc(cifRef, serverCif, { merge: true }).catch(() => {});
+            }
+          }).catch(() => {});
+        }
+      })
+      .catch(() => {});
+
     // Load dashboard order items if client has not received them yet
     fetch('/api/dashboard')
       .then(res => safeJson(res))
@@ -908,6 +1184,9 @@ export function Dashboard() {
             }
             if (payload.productionLines && typeof payload.productionLines === 'object') {
               setProductionLines(prev => ({ ...payload.productionLines, ...prev }));
+            }
+            if (payload.cifOfferings && typeof payload.cifOfferings === 'object') {
+              setCifOfferings(prev => ({ ...payload.cifOfferings, ...prev }));
             }
             if (payload.dashboard?.data && Array.isArray(payload.dashboard.data)) {
               setData(prev => (prev && prev.length > 0 ? prev : payload.dashboard.data));
@@ -944,6 +1223,22 @@ export function Dashboard() {
               } catch (e) {}
               return merged;
             });
+          } else if (payload.type === 'cif_offering' && payload.id) {
+            setCifOfferings(prev => {
+              const next = { ...prev, [payload.id]: { text: payload.text, updatedAt: payload.updatedAt } };
+              try {
+                localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(next));
+              } catch (e) {}
+              return next;
+            });
+          } else if (payload.type === 'cif_offerings_batch' && payload.cifOfferings) {
+            setCifOfferings(prev => {
+              const merged = { ...prev, ...payload.cifOfferings };
+              try {
+                localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
+              } catch (e) {}
+              return merged;
+            });
           } else if (payload.type === 'dashboard' && payload.data) {
             setData(payload.data);
             if (payload.lastUpdated) setLastUpdated(payload.lastUpdated);
@@ -957,6 +1252,7 @@ export function Dashboard() {
       const dataKeys = ['production_dashboard_data', 'production_data', 'dashboard_data', 'orders_data', 'excel_data'];
       const remarkKeys = ['production_dashboard_remarks', 'remarks', 'app_remarks'];
       const lineKeys = ['production_dashboard_production_lines', 'production_lines', 'app_production_lines'];
+      const cifKeys = ['production_dashboard_cif_offerings', 'cif_offerings', 'app_cif_offerings'];
 
       let recoveredData: ProductionOrder[] | null = null;
       for (const k of dataKeys) {
@@ -998,6 +1294,19 @@ export function Dashboard() {
         }
       }
 
+      let recoveredCif: Record<string, { text: string; updatedAt: number | null }> = {};
+      for (const k of cifKeys) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          try {
+            const p = JSON.parse(val);
+            if (p && typeof p === 'object') {
+              recoveredCif = { ...recoveredCif, ...p };
+            }
+          } catch (e) {}
+        }
+      }
+
       if (recoveredData) {
         setData(prev => (prev && prev.length > 0 ? prev : recoveredData));
       }
@@ -1006,6 +1315,9 @@ export function Dashboard() {
       }
       if (Object.keys(recoveredLines).length > 0) {
         setProductionLines(prev => ({ ...recoveredLines, ...prev }));
+      }
+      if (Object.keys(recoveredCif).length > 0) {
+        setCifOfferings(prev => ({ ...recoveredCif, ...prev }));
       }
     } catch (e) {}
 
@@ -1049,6 +1361,42 @@ export function Dashboard() {
 
     // 3. Optional: Sync to Server API for redundancy
     fetch('/api/remarks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, text, updatedAt: updated })
+    }).catch(() => {});
+  };
+
+  const handleCifOfferingChange = async (id: string, text: string) => {
+    const updated = Date.now();
+    const cifData = { text, updatedAt: updated };
+    
+    setCifOfferings(prev => {
+      const next = { ...prev, [id]: cifData };
+      try {
+        localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+
+    try {
+      const cifRef = doc(db, 'cif_offerings_v2', 'all');
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(cifRef);
+        if (!snap.exists()) {
+          transaction.set(cifRef, { [id]: cifData });
+        } else {
+          transaction.update(cifRef, { [id]: cifData });
+        }
+      });
+    } catch (err) {
+      console.warn('Firestore Transaction Failed for CIF offering:', err);
+      try {
+        await setDoc(doc(db, 'cif_offerings', id), cifData);
+      } catch (e) {}
+    }
+
+    fetch('/api/cif-offerings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, text, updatedAt: updated })
@@ -1239,6 +1587,7 @@ export function Dashboard() {
           }
 
           const excelExtractedRemarks: Record<string, { text: string; updatedAt: number }> = {};
+          const excelExtractedCifOfferings: Record<string, { text: string; updatedAt: number }> = {};
 
           const parsedData: ProductionOrder[] = targetRows.map((row: any, index: number) => {
             const rawPlanDelDate = getVal(row, ['Plan Del Date', 'Plan Del Date ', 'plan del date']);
@@ -1303,6 +1652,14 @@ export function Dashboard() {
               }
             }
 
+            const rowCifOffering = String(getVal(row, ['CIF Offering', 'cif offering', 'CIF OFFERING', 'CIF', 'Cif Offering', 'CIF OFFERINGS', 'Cif']) || '').trim();
+            if (rowCifOffering) {
+              excelExtractedCifOfferings[finalId] = { text: rowCifOffering, updatedAt: Date.now() };
+              if (legacyIdStr) {
+                excelExtractedCifOfferings[legacyIdStr] = { text: rowCifOffering, updatedAt: Date.now() };
+              }
+            }
+
             const rawPED = getVal(row, ['PED', 'ped', 'Ped', 'P.E.D.']);
             const parsedPEDDate = parseExcelDate(rawPED);
             let pedStr = '';
@@ -1345,9 +1702,32 @@ export function Dashboard() {
               cumCTNQty: getNum(row, ['Cum CTN Qty', 'CUM CTN QTY', 'Cum Ctn Qty']),
               statusText: statusText,
               deliveredQty: deliveredQty,
+              cifOffering: rowCifOffering,
               remark: rowRemark // Store it in the object as well
             };
           });
+
+          if (Object.keys(excelExtractedCifOfferings).length > 0) {
+            setCifOfferings(prev => {
+              const merged = { ...excelExtractedCifOfferings, ...prev };
+              try {
+                localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
+              } catch (e) {}
+              return merged;
+            });
+
+            const syncExtractedCif = async () => {
+              try {
+                const cifRef = doc(db, 'cif_offerings_v2', 'all');
+                const snap = await getDoc(cifRef);
+                const existing = snap.exists() ? snap.data() : {};
+                await setDoc(cifRef, { ...existing, ...excelExtractedCifOfferings }, { merge: true });
+              } catch (err) {
+                console.error("Batch CIF offerings sync failed", err);
+              }
+            };
+            syncExtractedCif();
+          }
 
           if (Object.keys(excelExtractedRemarks).length > 0) {
             setRemarks(prev => {
@@ -1520,12 +1900,16 @@ export function Dashboard() {
       const normalizedItemRemark = itemRemarkText.toUpperCase();
       const matchesRemark = filterRemark.length === 0 || filterRemark.some(r => r === normalizedItemRemark || (r === '(Empty)' && normalizedItemRemark === ''));
 
+      const itemCifText = getRowCifOffering(item, cifOfferings, normalizedCifOfferingsMap).text.trim();
+      const normalizedItemCif = itemCifText.toUpperCase();
+      const matchesCifOffering = filterCifOffering.length === 0 || filterCifOffering.some(c => c === normalizedItemCif || (c === '(Empty)' && normalizedItemCif === ''));
+
       const pedVal = (item.ped && item.ped.trim()) ? item.ped.trim() : '(Empty)';
       const matchesPED = filterPED.length === 0 || filterPED.includes(pedVal);
 
-      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesPED;
+      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesCifOffering && matchesPED;
     });
-  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, filterPED, remarks, sixWeekWindow]);
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, filterCifOffering, filterPED, remarks, cifOfferings, sixWeekWindow]);
 
   const rowVirtualizer = useVirtualizer({
     count: filteredItems.length,
@@ -1547,17 +1931,28 @@ export function Dashboard() {
     return Array.from(suggestions).sort();
   }, [remarks]);
 
+  const uniqueCifOfferingsList = useMemo(() => {
+    const suggestions = new Set<string>();
+    Object.values(cifOfferings).forEach((r: { text: string; updatedAt: number | null }) => {
+      if (r?.text && r.text.trim()) suggestions.add(r.text.trim().toUpperCase());
+    });
+    return Array.from(suggestions).sort();
+  }, [cifOfferings]);
+
   // Helper to get unique options based on current filters (excluding the filter itself)
-  const getUniqueOptions = useCallback((field: keyof ProductionOrder | 'remark' | 'ped') => {
+  const getUniqueOptions = useCallback((field: keyof ProductionOrder | 'remark' | 'cifOffering' | 'ped') => {
     if (!data) return [];
     const options = new Set<string>();
     
     data.forEach(item => {
       const itemRemarkText = getRowRemark(item, remarks, normalizedRemarksMap).text.trim();
+      const itemCifText = getRowCifOffering(item, cifOfferings, normalizedCifOfferingsMap).text.trim();
+
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
-        ) || itemRemarkText.toLowerCase().includes(searchTerm.toLowerCase());
+        ) || itemRemarkText.toLowerCase().includes(searchTerm.toLowerCase())
+        || itemCifText.toLowerCase().includes(searchTerm.toLowerCase());
       
       const matchesBuyer = field === 'buyer' || filterBuyer.length === 0 || filterBuyer.includes(String(item.buyer));
       const matchesWeek = field === 'weekNo' || filterWeekNo.length === 0 || filterWeekNo.includes(String(item.weekNo));
@@ -1576,12 +1971,17 @@ export function Dashboard() {
       const normalizedItemRemark = itemRemarkText.toUpperCase();
       const matchesRemark = field === 'remark' || filterRemark.length === 0 || filterRemark.some(r => r === normalizedItemRemark || (r === '(Empty)' && normalizedItemRemark === ''));
 
+      const normalizedItemCif = itemCifText.toUpperCase();
+      const matchesCifOffering = field === 'cifOffering' || filterCifOffering.length === 0 || filterCifOffering.some(c => c === normalizedItemCif || (c === '(Empty)' && normalizedItemCif === ''));
+
       const pedVal = (item.ped && item.ped.trim()) ? item.ped.trim() : '(Empty)';
       const matchesPED = field === 'ped' || filterPED.length === 0 || filterPED.includes(pedVal);
 
-      if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesPED) {
+      if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesCifOffering && matchesPED) {
         if (field === 'remark') {
           options.add(normalizedItemRemark === '' ? '(Empty)' : normalizedItemRemark);
+        } else if (field === 'cifOffering') {
+          options.add(normalizedItemCif === '' ? '(Empty)' : normalizedItemCif);
         } else if (field === 'ped') {
           options.add(pedVal);
         } else {
@@ -1591,7 +1991,7 @@ export function Dashboard() {
     });
     
     return Array.from(options).filter(Boolean);
-  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, filterPED, remarks]);
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, filterCifOffering, filterPED, remarks, cifOfferings]);
 
   // Unique values for dropdowns (strictly restricted to the 6-week window)
   const uniqueBuyers = useMemo(() => Array.from(new Set([...getUniqueOptions('buyer'), ...filterBuyer])).sort(), [getUniqueOptions, filterBuyer]);
@@ -1599,6 +1999,7 @@ export function Dashboard() {
   const uniqueShipmentModes = useMemo(() => Array.from(new Set([...getUniqueOptions('shipmentMode'), ...filterShipmentMode])).sort(), [getUniqueOptions, filterShipmentMode]);
   const uniqueDestinations = useMemo(() => Array.from(new Set([...getUniqueOptions('destination'), ...filterDestination])).sort(), [getUniqueOptions, filterDestination]);
   const uniquePackMethods = useMemo(() => Array.from(new Set([...getUniqueOptions('packMethod'), ...filterPackMethod])).sort(), [getUniqueOptions, filterPackMethod]);
+  const uniqueCifOfferings = useMemo(() => Array.from(new Set([...getUniqueOptions('cifOffering'), ...filterCifOffering])).sort(), [getUniqueOptions, filterCifOffering]);
   const uniqueRemarks = useMemo(() => Array.from(new Set([...getUniqueOptions('remark'), ...filterRemark])).sort(), [getUniqueOptions, filterRemark]);
   const uniquePEDs = useMemo(() => Array.from(new Set([...getUniqueOptions('ped'), ...filterPED])).sort(), [getUniqueOptions, filterPED]);
 
@@ -1665,6 +2066,7 @@ export function Dashboard() {
       'Cum SewOut Qty': Number(item.cumSewOutQty) || 0,
       'Cum CTN Qty': Number(item.cumCTNQty) || 0,
       'Status': item.statusText,
+      'CIF Offering': getRowCifOffering(item, cifOfferings, normalizedCifOfferingsMap).text,
       'Remark': getRowRemark(item, remarks, normalizedRemarksMap).text,
       'Production Lines': getRowProductionLine(item, productionLines).text,
       'Delivered Qty': Number(item.deliveredQty) || 0
@@ -1678,12 +2080,12 @@ export function Dashboard() {
       { wch: 15 }, { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
-      { wch: 15 }, { wch: 30 }, { wch: 20 }, { wch: 15 }
+      { wch: 15 }, { wch: 25 }, { wch: 30 }, { wch: 20 }, { wch: 15 }
     ];
     worksheet['!cols'] = colWidths;
 
     XLSX.writeFile(workbook, `Production_Data_${new Date().toISOString().split('T')[0]}.xlsx`);
-  }, [filteredItems, remarks]);
+  }, [filteredItems, remarks, cifOfferings]);
 
   if (!data) {
     return (
@@ -1937,6 +2339,13 @@ export function Dashboard() {
               />
               
               <MultiSelectDropdown 
+                label="CIF Offerings"
+                options={uniqueCifOfferings}
+                selectedValues={filterCifOffering}
+                onChange={setFilterCifOffering}
+              />
+
+              <MultiSelectDropdown 
                 label="Remarks"
                 options={uniqueRemarks}
                 selectedValues={filterRemark}
@@ -1954,7 +2363,7 @@ export function Dashboard() {
             <div className="grid grid-cols-3 sm:flex gap-2 w-full sm:w-auto">
               <button 
                 onClick={() => {
-                  setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]); setFilterRemark([]); setFilterPED([]);
+                  setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]); setFilterCifOffering([]); setFilterRemark([]); setFilterPED([]);
                 }}
                 className="px-2 py-2 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-medium transition-colors whitespace-nowrap"
               >
@@ -1985,7 +2394,7 @@ export function Dashboard() {
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div ref={tableContainerRef} className="overflow-auto max-h-[75vh]">
             {!isMobile ? (
-              <table className="w-full min-w-[2290px] table-fixed text-sm text-left border-collapse relative">
+              <table className="w-full min-w-[2490px] table-fixed text-sm text-left border-collapse relative">
                 <colgroup>
                   {TABLE_COLUMN_WIDTHS.map((width, idx) => (
                     <col key={idx} style={{ width }} />
@@ -2010,6 +2419,7 @@ export function Dashboard() {
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum SewOut Qty</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum CTN Qty</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">Status</th>
+                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">CIF Offering</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Remark</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Production Lines</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right truncate">Delivered Qty</th>
@@ -2018,7 +2428,7 @@ export function Dashboard() {
                 <tbody>
                   {paddingTop > 0 && (
                     <tr className="border-0 p-0 m-0">
-                      <td colSpan={20} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                      <td colSpan={21} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                     </tr>
                   )}
                   {virtualRows.length > 0 ? (
@@ -2062,6 +2472,14 @@ export function Dashboard() {
                             </span>
                           </td>
                           <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
+                            <CifOfferingInput 
+                              initialValue={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).text}
+                              updatedAt={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).updatedAt}
+                              rowId={row.id}
+                              onSave={handleCifOfferingChange}
+                            />
+                          </td>
+                          <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
                             <RemarkInput 
                               initialValue={getRowRemark(row, remarks, normalizedRemarksMap).text}
                               updatedAt={getRowRemark(row, remarks, normalizedRemarksMap).updatedAt}
@@ -2082,14 +2500,14 @@ export function Dashboard() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={20} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
+                      <td colSpan={21} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
                         No orders found matching the current filters.
                       </td>
                     </tr>
                   )}
                   {paddingBottom > 0 && (
                     <tr className="border-0 p-0 m-0">
-                      <td colSpan={20} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                      <td colSpan={21} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                     </tr>
                   )}
                 </tbody>
@@ -2163,6 +2581,12 @@ export function Dashboard() {
                         </div>
 
                         <div className="mt-auto space-y-1.5">
+                          <CifOfferingInput 
+                            initialValue={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).text}
+                            updatedAt={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).updatedAt}
+                            rowId={row.id}
+                            onSave={handleCifOfferingChange}
+                          />
                           <RemarkInput 
                             initialValue={getRowRemark(row, remarks, normalizedRemarksMap).text}
                             updatedAt={getRowRemark(row, remarks, normalizedRemarksMap).updatedAt}
@@ -2202,6 +2626,7 @@ export function Dashboard() {
         onClose={() => setShowPrintModal(false)}
         data={filteredItems.length > 0 ? filteredItems : (data || [])}
         remarks={remarks}
+        cifOfferings={cifOfferings}
         productionLines={productionLines}
         activeFilters={{
           search: searchTerm,
@@ -2211,6 +2636,7 @@ export function Dashboard() {
           shipmentModes: filterShipmentMode,
           destinations: filterDestination,
           packMethods: filterPackMethod,
+          cifOfferingsFilter: filterCifOffering,
           remarksFilter: filterRemark,
           peds: filterPED
         }}
