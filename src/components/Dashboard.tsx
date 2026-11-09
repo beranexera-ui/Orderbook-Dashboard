@@ -1156,16 +1156,19 @@ export function Dashboard() {
       })
       .catch(() => {});
 
-    // Load dashboard order items if client has not received them yet
+    // Load dashboard order items immediately from server backup
     fetch('/api/dashboard')
       .then(res => safeJson(res))
       .then(serverDashboard => {
         if (!isMounted || !serverDashboard?.data || !Array.isArray(serverDashboard.data)) return;
         if (serverDashboard.data.length > 0) {
-          setData(prev => (prev && prev.length > 0 ? prev : serverDashboard.data));
+          setData(serverDashboard.data);
           if (serverDashboard.lastUpdated) {
-            setLastUpdated(prev => prev || serverDashboard.lastUpdated);
+            setLastUpdated(serverDashboard.lastUpdated);
           }
+          try {
+            localStorage.setItem('production_dashboard_data', JSON.stringify(serverDashboard.data));
+          } catch (e) {}
         }
       })
       .catch(() => {});
@@ -1188,8 +1191,14 @@ export function Dashboard() {
             if (payload.cifOfferings && typeof payload.cifOfferings === 'object') {
               setCifOfferings(prev => ({ ...payload.cifOfferings, ...prev }));
             }
-            if (payload.dashboard?.data && Array.isArray(payload.dashboard.data)) {
-              setData(prev => (prev && prev.length > 0 ? prev : payload.dashboard.data));
+            if (payload.dashboard?.data && Array.isArray(payload.dashboard.data) && payload.dashboard.data.length > 0) {
+              setData(payload.dashboard.data);
+              if (payload.dashboard.lastUpdated) {
+                setLastUpdated(payload.dashboard.lastUpdated);
+              }
+              try {
+                localStorage.setItem('production_dashboard_data', JSON.stringify(payload.dashboard.data));
+              } catch (e) {}
             }
           } else if (payload.type === 'remark' && payload.id) {
             setRemarks(prev => {
@@ -1239,9 +1248,12 @@ export function Dashboard() {
               } catch (e) {}
               return merged;
             });
-          } else if (payload.type === 'dashboard' && payload.data) {
+          } else if (payload.type === 'dashboard' && payload.data && Array.isArray(payload.data)) {
             setData(payload.data);
             if (payload.lastUpdated) setLastUpdated(payload.lastUpdated);
+            try {
+              localStorage.setItem('production_dashboard_data', JSON.stringify(payload.data));
+            } catch (e) {}
           }
         } catch (e) {}
       };
