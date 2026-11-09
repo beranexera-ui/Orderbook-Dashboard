@@ -924,12 +924,10 @@ export function Dashboard() {
           }
         }
       }
-    }, (err) => {
-      console.error('Dashboard sync error:', err);
-      if (err.message.includes('Quota exceeded')) {
-        setError("Firestore quota exceeded. Data may not sync in real-time.");
-      } else {
-        setError(`Sync Error: ${err.message}`);
+    }, (err: any) => {
+      console.warn('Dashboard Firestore sync notice:', err?.message || err);
+      if (err?.message?.includes('Quota exceeded') || err?.message?.includes('quota')) {
+        console.info("Firestore daily free quota reached. Operating on high-availability Express server + local sync.");
       }
     });
 
@@ -1156,19 +1154,16 @@ export function Dashboard() {
       })
       .catch(() => {});
 
-    // Load dashboard order items immediately from server backup
+    // Load dashboard order items if client has not received them yet
     fetch('/api/dashboard')
       .then(res => safeJson(res))
       .then(serverDashboard => {
         if (!isMounted || !serverDashboard?.data || !Array.isArray(serverDashboard.data)) return;
         if (serverDashboard.data.length > 0) {
-          setData(serverDashboard.data);
+          setData(prev => (prev && prev.length > 0 ? prev : serverDashboard.data));
           if (serverDashboard.lastUpdated) {
-            setLastUpdated(serverDashboard.lastUpdated);
+            setLastUpdated(prev => prev || serverDashboard.lastUpdated);
           }
-          try {
-            localStorage.setItem('production_dashboard_data', JSON.stringify(serverDashboard.data));
-          } catch (e) {}
         }
       })
       .catch(() => {});
@@ -1191,14 +1186,8 @@ export function Dashboard() {
             if (payload.cifOfferings && typeof payload.cifOfferings === 'object') {
               setCifOfferings(prev => ({ ...payload.cifOfferings, ...prev }));
             }
-            if (payload.dashboard?.data && Array.isArray(payload.dashboard.data) && payload.dashboard.data.length > 0) {
-              setData(payload.dashboard.data);
-              if (payload.dashboard.lastUpdated) {
-                setLastUpdated(payload.dashboard.lastUpdated);
-              }
-              try {
-                localStorage.setItem('production_dashboard_data', JSON.stringify(payload.dashboard.data));
-              } catch (e) {}
+            if (payload.dashboard?.data && Array.isArray(payload.dashboard.data)) {
+              setData(prev => (prev && prev.length > 0 ? prev : payload.dashboard.data));
             }
           } else if (payload.type === 'remark' && payload.id) {
             setRemarks(prev => {
@@ -1248,12 +1237,9 @@ export function Dashboard() {
               } catch (e) {}
               return merged;
             });
-          } else if (payload.type === 'dashboard' && payload.data && Array.isArray(payload.data)) {
+          } else if (payload.type === 'dashboard' && payload.data) {
             setData(payload.data);
             if (payload.lastUpdated) setLastUpdated(payload.lastUpdated);
-            try {
-              localStorage.setItem('production_dashboard_data', JSON.stringify(payload.data));
-            } catch (e) {}
           }
         } catch (e) {}
       };
