@@ -888,11 +888,12 @@ export function Dashboard() {
     testConnection();
   }, []);
 
-  // 2. Real-time Sync from Firestore (Single-Doc Ultra-Low-Read Mode)
+  // 2. Real-time Sync from Firestore (Single-Doc Ultra-Low-Read Mode for Dashboard, Remarks, Lines, and CIF)
   useEffect(() => {
     let isMounted = true;
 
-    const unsubDashboardMain = onSnapshot(doc(db, 'dashboard_v3', 'main'), async (snap) => {
+    // A. Dashboard Data Sync (v3 main document)
+    const unsubDashboardV3 = onSnapshot(doc(db, 'dashboard_v3', 'main'), async (snap) => {
       if (!isMounted || !snap.exists()) return;
       const mainData = snap.data();
       if (!mainData) return;
@@ -922,25 +923,128 @@ export function Dashboard() {
         } catch (e) {}
       }
     }, (err: any) => {
-      console.warn('Dashboard Firestore sync notice:', err?.message || err);
+      console.warn('Dashboard V3 sync notice:', err?.message || err);
     });
 
-    // Fallback listener for legacy single document dashboardData/main
-    const unsubDashboardLegacy = onSnapshot(doc(db, 'dashboardData', 'main'), (snap) => {
+    // B. Dashboard Legacy Meta Sync
+    const unsubDashboardMeta = onSnapshot(doc(db, 'dashboardData', 'meta'), async (snap) => {
       if (!isMounted || !snap.exists()) return;
-      const mainData = snap.data();
-      if (mainData?.orders && Array.isArray(mainData.orders) && mainData.orders.length > 0) {
-        setData(prev => (prev && prev.length > 0 ? prev : mainData.orders));
-        if (mainData.lastUpdated) {
-          setLastUpdated(prev => prev || mainData.lastUpdated);
+      const meta = snap.data();
+      if (!meta) return;
+
+      if (meta.orders && Array.isArray(meta.orders) && meta.orders.length > 0) {
+        setData(meta.orders);
+        if (meta.lastUpdated) setLastUpdated(meta.lastUpdated);
+        try {
+          localStorage.setItem('production_dashboard_data', JSON.stringify(meta.orders));
+        } catch (e) {}
+      } else if (meta.chunkCount && meta.chunkCount > 0) {
+        const chunks: any[] = [];
+        for (let i = 0; i < meta.chunkCount; i++) {
+          try {
+            const cSnap = await getDoc(doc(db, 'dashboardData', `chunk_${i}`));
+            if (cSnap.exists() && cSnap.data().orders) {
+              chunks.push(...cSnap.data().orders);
+            }
+          } catch (e) {}
+        }
+        if (chunks.length > 0) {
+          setData(chunks);
+          if (meta.lastUpdated) setLastUpdated(meta.lastUpdated);
+          try {
+            localStorage.setItem('production_dashboard_data', JSON.stringify(chunks));
+          } catch (e) {}
         }
       }
     }, () => {});
 
+    // C. Dashboard Legacy Main Sync
+    const unsubDashboardMain = onSnapshot(doc(db, 'dashboardData', 'main'), (snap) => {
+      if (!isMounted || !snap.exists()) return;
+      const mainData = snap.data();
+      if (mainData?.orders && Array.isArray(mainData.orders) && mainData.orders.length > 0) {
+        setData(mainData.orders);
+        if (mainData.lastUpdated) setLastUpdated(mainData.lastUpdated);
+      }
+    }, () => {});
+
+    // D. Remarks Sync (remarks_v2/all)
+    const unsubRemarks = onSnapshot(doc(db, 'remarks_v2', 'all'), (snap) => {
+      if (snap.exists() && isMounted) {
+        const newRemarks = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
+        setRemarks(prev => {
+          const merged = { ...prev };
+          Object.entries(newRemarks).forEach(([id, data]) => {
+            if (data.text && data.text.trim() !== '') {
+              merged[id] = data;
+            } else if (!merged[id]) {
+              merged[id] = data;
+            }
+          });
+          try {
+            localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
+      }
+    }, (err) => {
+      console.warn('Remarks sync error:', err);
+    });
+
+    // E. Production Lines Sync (production_lines_v2/all)
+    const unsubProductionLines = onSnapshot(doc(db, 'production_lines_v2', 'all'), (snap) => {
+      if (snap.exists() && isMounted) {
+        const newLines = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
+        setProductionLines(prev => {
+          const merged = { ...prev };
+          Object.entries(newLines).forEach(([id, data]) => {
+            if (data.text && data.text.trim() !== '') {
+              merged[id] = data;
+            } else if (!merged[id]) {
+              merged[id] = data;
+            }
+          });
+          try {
+            localStorage.setItem('production_dashboard_production_lines', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
+      }
+    }, (err) => {
+      console.warn('Production lines sync error:', err);
+    });
+
+    // F. CIF Offerings Sync (cif_offerings_v2/all)
+    const unsubCifOfferings = onSnapshot(doc(db, 'cif_offerings_v2', 'all'), (snap) => {
+      if (snap.exists() && isMounted) {
+        const newCif = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
+        setCifOfferings(prev => {
+          const merged = { ...prev };
+          Object.entries(newCif).forEach(([id, data]) => {
+            if (data.text && data.text.trim() !== '') {
+              merged[id] = data;
+            } else if (!merged[id]) {
+              merged[id] = data;
+            }
+          });
+          try {
+            localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
+      }
+    }, (err) => {
+      console.warn('CIF offerings sync error:', err);
+    });
+
     return () => {
       isMounted = false;
+      unsubDashboardV3();
+      unsubDashboardMeta();
       unsubDashboardMain();
-      unsubDashboardLegacy();
+      unsubRemarks();
+      unsubProductionLines();
+      unsubCifOfferings();
     };
   }, []);
 
@@ -1355,6 +1459,19 @@ export function Dashboard() {
           });
         }
       }
+
+      // Also set dashboardData/meta and dashboardData/main for legacy listeners
+      await setDoc(doc(db, 'dashboardData', 'meta'), {
+        chunkCount: chunks.length,
+        lastUpdated: now,
+        uploadId: uploadId
+      }).catch(() => {});
+
+      await setDoc(doc(db, 'dashboardData', 'main'), {
+        orders: parsedData,
+        lastUpdated: now,
+        uploadId: uploadId
+      }).catch(() => {});
 
       setLoadingState('idle');
     } catch (err: any) {
