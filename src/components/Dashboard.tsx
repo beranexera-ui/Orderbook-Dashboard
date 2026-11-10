@@ -623,20 +623,24 @@ export function getSixWeeksWindow(): { start: Date; end: Date; weekNumbers: Set<
 function parseExcelDate(val: any): Date | null {
   if (val == null || val === '') return null;
   if (val instanceof Date && !isNaN(val.getTime())) return val;
-  if (typeof val === 'number') {
-    if (val > 30000 && val < 60000) {
-      return new Date(Math.round((val - 25569) * 86400 * 1000));
-    }
+  
+  // Handle numeric Excel date serials (e.g. 45604 or "45604")
+  const numVal = Number(val);
+  if (!isNaN(numVal) && numVal > 30000 && numVal < 60000) {
+    return new Date(Math.round((numVal - 25569) * 86400 * 1000));
   }
+
   const str = String(val).trim();
+  if (!str) return null;
+
   if (/^\d{8}$/.test(str)) {
     const y = parseInt(str.substring(0, 4), 10);
     const m = parseInt(str.substring(4, 6), 10) - 1;
     const d = parseInt(str.substring(6, 8), 10);
     return new Date(y, m, d);
   }
-  if (/^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}$/.test(str)) {
-    const parts = str.split(/[\/\-]/);
+  if (/^\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}$/.test(str)) {
+    const parts = str.split(/[\/\-\.]/);
     return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
   }
   if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}$/.test(str)) {
@@ -668,15 +672,15 @@ function isDateWithinSixWeeks(d: Date | null, weekNo: string, window: { start: D
 function getVal(row: any, searchKeys: string[]): any {
   if (!row || typeof row !== 'object') return undefined;
   for (const k of searchKeys) {
-    if (row[k] !== undefined && row[k] !== null && row[k] !== '') {
+    if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
       return row[k];
     }
   }
-  const normKeys = searchKeys.map(k => k.toLowerCase().replace(/\s+/g, ''));
+  const normKeys = searchKeys.map(k => k.toLowerCase().replace(/[^a-z0-9]/g, ''));
   for (const key of Object.keys(row)) {
-    const normKey = key.toLowerCase().replace(/\s+/g, '');
+    const normKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
     if (normKeys.includes(normKey)) {
-      if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
+      if (row[key] !== undefined && row[key] !== null && String(row[key]).trim() !== '') {
         return row[key];
       }
     }
@@ -884,196 +888,59 @@ export function Dashboard() {
     testConnection();
   }, []);
 
-  // 2. Real-time Sync from Firestore
+  // 2. Real-time Sync from Firestore (Single-Doc Ultra-Low-Read Mode)
   useEffect(() => {
     let isMounted = true;
 
-    // Listen to the entire dashboardData collection for chunked data
-    const unsubDashboard = onSnapshot(collection(db, 'dashboardData'), (snap) => {
-      if (!isMounted) return;
+    const unsubDashboardMain = onSnapshot(doc(db, 'dashboard_v3', 'main'), async (snap) => {
+      if (!isMounted || !snap.exists()) return;
+      const mainData = snap.data();
+      if (!mainData) return;
       
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const meta = docs.find(d => d.id === 'meta') as any;
-      const main = docs.find(d => d.id === 'main') as any;
+      let allOrders = mainData.orders || [];
+      const chunkCount = mainData.chunkCount || 1;
       
-      if (main && main.orders && Array.isArray(main.orders)) {
-        // Legacy support: data still in 'main'
-        setData(main.orders);
-        setLastUpdated(main.lastUpdated || null);
-      } else if (meta && meta.orders && Array.isArray(meta.orders)) {
-        // Support for non-chunked meta doc
-        setData(meta.orders);
-        setLastUpdated(meta.lastUpdated || null);
-      } else if (meta && meta.chunkCount !== undefined) {
-        // Chunked data support
-        const chunks = docs.filter(d => d.id.startsWith('chunk_')).sort((a, b) => {
-          const idxA = parseInt(a.id.split('_')[1]);
-          const idxB = parseInt(b.id.split('_')[1]);
-          return idxA - idxB;
-        });
-
-        if (chunks.length >= meta.chunkCount && meta.chunkCount > 0) {
-          const allOrders = chunks.flatMap((c: any) => c.orders || []);
-          // Only update if we have meaningful data
-          if (allOrders.length > 0) {
-            setData(allOrders);
-            setLastUpdated(meta.lastUpdated || null);
-            try {
-              localStorage.setItem('production_dashboard_data', JSON.stringify(allOrders));
-            } catch (e) {}
-          }
+      if (chunkCount > 1) {
+        for (let i = 1; i < chunkCount; i++) {
+          try {
+            const partSnap = await getDoc(doc(db, 'dashboard_v3', `part_${i}`));
+            if (partSnap.exists() && partSnap.data().orders) {
+              allOrders = allOrders.concat(partSnap.data().orders);
+            }
+          } catch (e) {}
         }
+      }
+      
+      if (allOrders.length > 0) {
+        setData(allOrders);
+        if (mainData.lastUpdated) {
+          setLastUpdated(mainData.lastUpdated);
+        }
+        try {
+          localStorage.setItem('production_dashboard_data', JSON.stringify(allOrders));
+          if (mainData.lastUpdated) localStorage.setItem('production_dashboard_last_updated', String(mainData.lastUpdated));
+        } catch (e) {}
       }
     }, (err: any) => {
       console.warn('Dashboard Firestore sync notice:', err?.message || err);
-      if (err?.message?.includes('Quota exceeded') || err?.message?.includes('quota')) {
-        console.info("Firestore daily free quota reached. Operating on high-availability Express server + local sync.");
-      }
     });
 
-    // Optimized Remarks Sync
-    const unsubRemarks = onSnapshot(doc(db, 'remarks_v2', 'all'), (snap) => {
-      if (snap.exists() && isMounted) {
-        const newRemarks = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
-        setRemarks(prev => {
-          const merged = { ...prev };
-          Object.entries(newRemarks).forEach(([id, data]) => {
-            // Only update if the new remark is non-empty, OR if we don't have it yet
-            if (data.text && data.text.trim() !== '') {
-              merged[id] = data;
-            } else if (!merged[id]) {
-              merged[id] = data;
-            }
-          });
-          try {
-            localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-          } catch (e) {}
-          return merged;
-        });
-      }
-    }, (err) => {
-      console.warn('Remarks sync error:', err);
-    });
-
-    // Optimized Production Lines Sync
-    const unsubProductionLines = onSnapshot(doc(db, 'production_lines_v2', 'all'), (snap) => {
-      if (snap.exists() && isMounted) {
-        const newLines = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
-        setProductionLines(prev => {
-          const merged = { ...prev };
-          Object.entries(newLines).forEach(([id, data]) => {
-            if (data.text && data.text.trim() !== '') {
-              merged[id] = data;
-            } else if (!merged[id]) {
-              merged[id] = data;
-            }
-          });
-          try {
-            localStorage.setItem('production_dashboard_production_lines', JSON.stringify(merged));
-          } catch (e) {}
-          return merged;
-        });
-      }
-    }, (err) => {
-      console.warn('Production lines sync error:', err);
-    });
-
-    // Optimized CIF Offerings Sync
-    const unsubCifOfferings = onSnapshot(doc(db, 'cif_offerings_v2', 'all'), (snap) => {
-      if (snap.exists() && isMounted) {
-        const newCif = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
-        setCifOfferings(prev => {
-          const merged = { ...prev };
-          Object.entries(newCif).forEach(([id, data]) => {
-            if (data.text && data.text.trim() !== '') {
-              merged[id] = data;
-            } else if (!merged[id]) {
-              merged[id] = data;
-            }
-          });
-          try {
-            localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
-          } catch (e) {}
-          return merged;
-        });
-      }
-    }, (err) => {
-      console.warn('CIF offerings sync error:', err);
-    });
-
-    // Recovery logic: Fetch from legacy 'remarks' collection if remarks are missing
-    const recoverLegacyRemarks = async () => {
-      try {
-        // Check if we've already done migration this session to avoid redundant heavy calls
-        const alreadyMigrated = sessionStorage.getItem('migration_done');
-        if (alreadyMigrated) return;
-
-        const legacySnap = await getDocs(collection(db, 'remarks'));
-        if (!legacySnap.empty && isMounted) {
-          console.log(`[Migration] Found ${legacySnap.size} legacy remarks. Checking for recovery...`);
-          const legacyData: Record<string, { text: string; updatedAt: number | null }> = {};
-          legacySnap.forEach(doc => {
-            const d = doc.data();
-            if (d.text && d.text.trim() !== '') {
-              legacyData[doc.id] = { text: d.text.trim(), updatedAt: d.updatedAt || null };
-            }
-          });
-          
-          if (Object.keys(legacyData).length > 0) {
-            setRemarks(prev => {
-              const merged = { ...prev };
-              let restoredCount = 0;
-              Object.entries(legacyData).forEach(([id, data]) => {
-                if (!merged[id] || !merged[id].text || merged[id].text.trim() === '') {
-                  merged[id] = data;
-                  restoredCount++;
-                }
-              });
-              if (restoredCount > 0) {
-                console.log(`[Migration] Restored ${restoredCount} remarks from legacy collection.`);
-              }
-              return merged;
-            });
-
-            // Migration to remarks_v2/all (optimized single doc)
-            const remarksRef = doc(db, 'remarks_v2', 'all');
-            const currentSnap = await getDoc(remarksRef);
-            const currentData = currentSnap.exists() ? currentSnap.data() as Record<string, any> : {};
-            
-            const toUpdate: Record<string, any> = {};
-            let hasNew = false;
-            Object.entries(legacyData).forEach(([id, data]) => {
-              if (!currentData[id] || !currentData[id].text || currentData[id].text.trim() === '') {
-                toUpdate[id] = data;
-                hasNew = true;
-              }
-            });
-
-            if (hasNew) {
-              // Batch the update if it's too large for a single doc (Firestore doc limit is 1MB)
-              // 300 remarks is fine, but 5000 might not be.
-              const keys = Object.keys(toUpdate);
-              for (let i = 0; i < keys.length; i += 200) {
-                const chunk: Record<string, any> = {};
-                keys.slice(i, i + 200).forEach(k => chunk[k] = toUpdate[k]);
-                await setDoc(remarksRef, chunk, { merge: true });
-              }
-            }
-            sessionStorage.setItem('migration_done', 'true');
-          }
+    // Fallback listener for legacy single document dashboardData/main
+    const unsubDashboardLegacy = onSnapshot(doc(db, 'dashboardData', 'main'), (snap) => {
+      if (!isMounted || !snap.exists()) return;
+      const mainData = snap.data();
+      if (mainData?.orders && Array.isArray(mainData.orders) && mainData.orders.length > 0) {
+        setData(prev => (prev && prev.length > 0 ? prev : mainData.orders));
+        if (mainData.lastUpdated) {
+          setLastUpdated(prev => prev || mainData.lastUpdated);
         }
-      } catch (err) {
-        console.warn('Legacy remarks recovery failed:', err);
       }
-    };
-    recoverLegacyRemarks();
+    }, () => {});
 
     return () => {
       isMounted = false;
-      unsubDashboard();
-      unsubRemarks();
-      unsubProductionLines();
-      unsubCifOfferings();
+      unsubDashboardMain();
+      unsubDashboardLegacy();
     };
   }, []);
 
@@ -1465,39 +1332,29 @@ export function Dashboard() {
       body: JSON.stringify({ data: parsedData, lastUpdated: now, uploadId })
     }).catch(err => console.warn('Express server dashboard sync notice:', err));
 
-    // 2. Persist to Firestore (Background Cloud Storage)
+    // 2. Persist to Firestore (Background Cloud Storage - Single Doc Low Read Strategy)
     try {
-      const CHUNK_SIZE = 400; // Safe size to stay under 1MB per doc
+      const CHUNK_SIZE = 800;
       const chunks: ProductionOrder[][] = [];
       for (let i = 0; i < parsedData.length; i += CHUNK_SIZE) {
         chunks.push(parsedData.slice(i, i + CHUNK_SIZE));
       }
 
-      // First, clear old chunks to avoid orphans if count decreases
-      const existingDocs = await getDocs(collection(db, 'dashboardData'));
-      const batch = writeBatch(db);
-      existingDocs.forEach(d => {
-        if (d.id.startsWith('chunk_') || d.id === 'main') {
-          batch.delete(d.ref);
-        }
-      });
-      await batch.commit();
-
-      // Write new chunks
-      for (let i = 0; i < chunks.length; i++) {
-        await setDoc(doc(db, 'dashboardData', `chunk_${i}`), {
-          orders: chunks[i],
-          uploadId
-        });
-        setUploadProgress(prev => ({ ...prev, current: Math.min((i + 1) * CHUNK_SIZE, parsedData.length) }));
-      }
-
-      // Write meta doc last to trigger sync on other PCs
-      await setDoc(doc(db, 'dashboardData', 'meta'), {
+      await setDoc(doc(db, 'dashboard_v3', 'main'), {
+        orders: chunks[0] || [],
         chunkCount: chunks.length,
         lastUpdated: now,
         uploadId: uploadId
       });
+
+      if (chunks.length > 1) {
+        for (let i = 1; i < chunks.length; i++) {
+          await setDoc(doc(db, 'dashboard_v3', `part_${i}`), {
+            orders: chunks[i],
+            uploadId
+          });
+        }
+      }
 
       setLoadingState('idle');
     } catch (err: any) {
@@ -1666,7 +1523,7 @@ export function Dashboard() {
               }
             }
 
-            const rawPED = getVal(row, ['PED', 'ped', 'Ped', 'P.E.D.']);
+            const rawPED = getVal(row, ['PED', 'ped', 'Ped', 'P.E.D.', 'P.E.D', 'PED Date', 'PED DATE', 'PED_DATE', 'PED-DATE', 'Plan Ex Del Date', 'Plan Ex-Del Date', 'PLAN EX DEL DATE', 'Plan Ex-Factory Date', 'Plan Ex Factory Date', 'Ex Del Date', 'Ex-Del Date', 'Plan Ex Del', 'PLAN EX DEL', 'AH']);
             const parsedPEDDate = parseExcelDate(rawPED);
             let pedStr = '';
             if (parsedPEDDate) {
