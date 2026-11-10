@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { initializeFirestore, setLogLevel } from "firebase/firestore";
+import { getFirestore, setLogLevel } from "firebase/firestore";
 import firebaseConfigData from "../firebase-applet-config.json";
 
 // Suppress Firestore internal connection warnings in preview environment
@@ -15,6 +15,4 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
-export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true
-}, firebaseConfigData.firestoreDatabaseId);
+export const db = getFirestore(app, firebaseConfigData.firestoreDatabaseId);

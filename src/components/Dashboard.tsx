@@ -878,7 +878,7 @@ export function Dashboard() {
   useEffect(() => {
     async function testConnection() {
       try {
-        await getDocFromServer(doc(db, 'dashboardData', 'main'));
+        await getDoc(doc(db, 'dashboard_v3', 'main'));
       } catch (error) {
         if (error instanceof Error && error.message.includes('Quota exceeded')) {
           setError("Firestore free tier quota exceeded. It will reset in 24 hours.");
@@ -974,17 +974,26 @@ export function Dashboard() {
         const newRemarks = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
         setRemarks(prev => {
           const merged = { ...prev };
+          let changed = false;
           Object.entries(newRemarks).forEach(([id, data]) => {
-            if (data.text && data.text.trim() !== '') {
-              merged[id] = data;
-            } else if (!merged[id]) {
-              merged[id] = data;
+            if (data && typeof data === 'object') {
+              const prevUpdated = merged[id]?.updatedAt || 0;
+              const newUpdated = data.updatedAt || 0;
+              if (!merged[id] || newUpdated >= prevUpdated) {
+                if (merged[id]?.text !== data.text || merged[id]?.updatedAt !== data.updatedAt) {
+                  merged[id] = data;
+                  changed = true;
+                }
+              }
             }
           });
-          try {
-            localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-          } catch (e) {}
-          return merged;
+          if (changed) {
+            try {
+              localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+            } catch (e) {}
+            return merged;
+          }
+          return prev;
         });
       }
     }, (err) => {
@@ -997,17 +1006,26 @@ export function Dashboard() {
         const newLines = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
         setProductionLines(prev => {
           const merged = { ...prev };
+          let changed = false;
           Object.entries(newLines).forEach(([id, data]) => {
-            if (data.text && data.text.trim() !== '') {
-              merged[id] = data;
-            } else if (!merged[id]) {
-              merged[id] = data;
+            if (data && typeof data === 'object') {
+              const prevUpdated = merged[id]?.updatedAt || 0;
+              const newUpdated = data.updatedAt || 0;
+              if (!merged[id] || newUpdated >= prevUpdated) {
+                if (merged[id]?.text !== data.text || merged[id]?.updatedAt !== data.updatedAt) {
+                  merged[id] = data;
+                  changed = true;
+                }
+              }
             }
           });
-          try {
-            localStorage.setItem('production_dashboard_production_lines', JSON.stringify(merged));
-          } catch (e) {}
-          return merged;
+          if (changed) {
+            try {
+              localStorage.setItem('production_dashboard_production_lines', JSON.stringify(merged));
+            } catch (e) {}
+            return merged;
+          }
+          return prev;
         });
       }
     }, (err) => {
@@ -1020,17 +1038,26 @@ export function Dashboard() {
         const newCif = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
         setCifOfferings(prev => {
           const merged = { ...prev };
+          let changed = false;
           Object.entries(newCif).forEach(([id, data]) => {
-            if (data.text && data.text.trim() !== '') {
-              merged[id] = data;
-            } else if (!merged[id]) {
-              merged[id] = data;
+            if (data && typeof data === 'object') {
+              const prevUpdated = merged[id]?.updatedAt || 0;
+              const newUpdated = data.updatedAt || 0;
+              if (!merged[id] || newUpdated >= prevUpdated) {
+                if (merged[id]?.text !== data.text || merged[id]?.updatedAt !== data.updatedAt) {
+                  merged[id] = data;
+                  changed = true;
+                }
+              }
             }
           });
-          try {
-            localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
-          } catch (e) {}
-          return merged;
+          if (changed) {
+            try {
+              localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
+            } catch (e) {}
+            return merged;
+          }
+          return prev;
         });
       }
     }, (err) => {
@@ -1317,26 +1344,15 @@ export function Dashboard() {
       return next;
     });
 
-    // 2. Persist to Firestore (Primary) using Transaction to single document
+    // 2. Persist to Firestore (Primary) - Direct setDoc with merge for maximum reliability & instant cross-PC sync
     try {
       const remarksRef = doc(db, 'remarks_v2', 'all');
-      await runTransaction(db, async (transaction) => {
-        const snap = await transaction.get(remarksRef);
-        if (!snap.exists()) {
-          transaction.set(remarksRef, { [id]: remarkData });
-        } else {
-          transaction.update(remarksRef, { [id]: remarkData });
-        }
-      });
+      await setDoc(remarksRef, { [id]: remarkData }, { merge: true });
     } catch (err) {
-      console.warn('Firestore Transaction Failed, attempting fallback:', err);
-      // Last-ditch effort if transaction fails
-      try {
-        await setDoc(doc(db, 'remarks', id), remarkData);
-      } catch (e) {}
+      console.warn('Firestore Save Notice for remark:', err);
     }
 
-    // 3. Optional: Sync to Server API for redundancy
+    // 3. Sync to Express Server API for redundancy & local SSE broadcast
     fetch('/api/remarks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1358,19 +1374,9 @@ export function Dashboard() {
 
     try {
       const cifRef = doc(db, 'cif_offerings_v2', 'all');
-      await runTransaction(db, async (transaction) => {
-        const snap = await transaction.get(cifRef);
-        if (!snap.exists()) {
-          transaction.set(cifRef, { [id]: cifData });
-        } else {
-          transaction.update(cifRef, { [id]: cifData });
-        }
-      });
+      await setDoc(cifRef, { [id]: cifData }, { merge: true });
     } catch (err) {
-      console.warn('Firestore Transaction Failed for CIF offering:', err);
-      try {
-        await setDoc(doc(db, 'cif_offerings', id), cifData);
-      } catch (e) {}
+      console.warn('Firestore Save Notice for CIF offering:', err);
     }
 
     fetch('/api/cif-offerings', {
@@ -1394,19 +1400,9 @@ export function Dashboard() {
 
     try {
       const linesRef = doc(db, 'production_lines_v2', 'all');
-      await runTransaction(db, async (transaction) => {
-        const snap = await transaction.get(linesRef);
-        if (!snap.exists()) {
-          transaction.set(linesRef, { [id]: lineData });
-        } else {
-          transaction.update(linesRef, { [id]: lineData });
-        }
-      });
+      await setDoc(linesRef, { [id]: lineData }, { merge: true });
     } catch (err) {
-      console.warn('Firestore Transaction Failed for production line:', err);
-      try {
-        await setDoc(doc(db, 'production_lines', id), lineData);
-      } catch (e) {}
+      console.warn('Firestore Save Notice for production line:', err);
     }
 
     fetch('/api/production-lines', {
