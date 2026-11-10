@@ -1154,15 +1154,15 @@ export function Dashboard() {
       })
       .catch(() => {});
 
-    // Load dashboard order items if client has not received them yet
+    // Load dashboard order items immediately from server backup
     fetch('/api/dashboard')
       .then(res => safeJson(res))
       .then(serverDashboard => {
         if (!isMounted || !serverDashboard?.data || !Array.isArray(serverDashboard.data)) return;
         if (serverDashboard.data.length > 0) {
-          setData(prev => (prev && prev.length > 0 ? prev : serverDashboard.data));
+          setData(serverDashboard.data);
           if (serverDashboard.lastUpdated) {
-            setLastUpdated(prev => prev || serverDashboard.lastUpdated);
+            setLastUpdated(serverDashboard.lastUpdated);
           }
         }
       })
@@ -1186,8 +1186,11 @@ export function Dashboard() {
             if (payload.cifOfferings && typeof payload.cifOfferings === 'object') {
               setCifOfferings(prev => ({ ...payload.cifOfferings, ...prev }));
             }
-            if (payload.dashboard?.data && Array.isArray(payload.dashboard.data)) {
-              setData(prev => (prev && prev.length > 0 ? prev : payload.dashboard.data));
+            if (payload.dashboard?.data && Array.isArray(payload.dashboard.data) && payload.dashboard.data.length > 0) {
+              setData(payload.dashboard.data);
+              if (payload.dashboard.lastUpdated) {
+                setLastUpdated(payload.dashboard.lastUpdated);
+              }
             }
           } else if (payload.type === 'remark' && payload.id) {
             setRemarks(prev => {
@@ -1237,9 +1240,14 @@ export function Dashboard() {
               } catch (e) {}
               return merged;
             });
-          } else if (payload.type === 'dashboard' && payload.data) {
+          } else if (payload.type === 'dashboard' && payload.data && Array.isArray(payload.data)) {
             setData(payload.data);
-            if (payload.lastUpdated) setLastUpdated(payload.lastUpdated);
+            if (payload.lastUpdated) {
+              setLastUpdated(payload.lastUpdated);
+            }
+            try {
+              localStorage.setItem('production_dashboard_data', JSON.stringify(payload.data));
+            } catch (e) {}
           }
         } catch (e) {}
       };
@@ -1444,12 +1452,20 @@ export function Dashboard() {
     const now = Date.now();
     const uploadId = now.toString();
 
-    // 1. Immediately store in localStorage
+    // 1. Immediately store in localStorage & send to Express Server for instant multi-PC SSE broadcast
     try {
       localStorage.setItem('production_dashboard_data', JSON.stringify(parsedData));
+      localStorage.setItem('production_dashboard_last_updated', String(now));
     } catch (e) {}
 
-    // 2. Persist to Firestore (Primary) - Using Chunked Strategy for large datasets
+    // Send immediately to Express Server API so all connected PCs update instantly via SSE
+    fetch('/api/dashboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: parsedData, lastUpdated: now, uploadId })
+    }).catch(err => console.warn('Express server dashboard sync notice:', err));
+
+    // 2. Persist to Firestore (Background Cloud Storage)
     try {
       const CHUNK_SIZE = 400; // Safe size to stay under 1MB per doc
       const chunks: ProductionOrder[][] = [];
@@ -1485,17 +1501,9 @@ export function Dashboard() {
 
       setLoadingState('idle');
     } catch (err: any) {
-      console.error('Firestore Save Failed:', err);
-      setError(`Database Error: ${err.message || 'Failed to save data'}. Your data is still visible locally but might not sync to other PCs.`);
+      console.warn('Firestore Save Notice (operating via Express server SSE):', err);
       setLoadingState('idle');
     }
-
-    // 3. Persist to Server API (Background Backup)
-    fetch('/api/dashboard', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: parsedData, lastUpdated: now, uploadId })
-    }).catch(() => {});
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
