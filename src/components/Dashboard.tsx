@@ -798,13 +798,72 @@ function getRowProductionLine(
 }
 
 export function Dashboard() {
-  const [data, setData] = useState<ProductionOrder[] | null>(null);
+  const [data, setData] = useState<ProductionOrder[] | null>(() => {
+    try {
+      const dataKeys = ['production_dashboard_data', 'production_data', 'dashboard_data', 'orders_data', 'excel_data'];
+      for (const k of dataKeys) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          const parsed = JSON.parse(val);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      }
+    } catch (e) {}
+    return null;
+  });
+
+  const [lastUpdated, setLastUpdated] = useState<number | null>(() => {
+    try {
+      const val = localStorage.getItem('production_dashboard_last_updated');
+      if (val) return Number(val);
+    } catch (e) {}
+    return null;
+  });
+
+  const lastUpdatedRef = useRef<number>(lastUpdated || 0);
+
   const [isDragging, setIsDragging] = useState(false);
   const [loadingState, setLoadingState] = useState<'idle' | 'reading' | 'parsing' | 'uploading'>('idle');
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
-  const [remarks, setRemarks] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
-  const [productionLines, setProductionLines] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
-  const [cifOfferings, setCifOfferings] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
+
+  const [remarks, setRemarks] = useState<Record<string, { text: string, updatedAt: number | null }>>(() => {
+    try {
+      const val = localStorage.getItem('production_dashboard_remarks');
+      if (val) return JSON.parse(val);
+    } catch (e) {}
+    return {};
+  });
+
+  const [productionLines, setProductionLines] = useState<Record<string, { text: string, updatedAt: number | null }>>(() => {
+    try {
+      const val = localStorage.getItem('production_dashboard_production_lines');
+      if (val) return JSON.parse(val);
+    } catch (e) {}
+    return {};
+  });
+
+  const [cifOfferings, setCifOfferings] = useState<Record<string, { text: string, updatedAt: number | null }>>(() => {
+    try {
+      const val = localStorage.getItem('production_dashboard_cif_offerings');
+      if (val) return JSON.parse(val);
+    } catch (e) {}
+    return {};
+  });
+
+  const updateDashboardData = useCallback((newOrders: ProductionOrder[], timestamp: number, _source: string) => {
+    if (!newOrders || !Array.isArray(newOrders) || newOrders.length === 0) return;
+    
+    // Only accept updates that are newer than or equal to our current timestamp, or if we currently have no data
+    if (timestamp >= lastUpdatedRef.current || lastUpdatedRef.current === 0) {
+      lastUpdatedRef.current = timestamp;
+      setLastUpdated(timestamp);
+      setData(newOrders);
+      try {
+        localStorage.setItem('production_dashboard_data', JSON.stringify(newOrders));
+        localStorage.setItem('production_dashboard_last_updated', String(timestamp));
+      } catch (e) {}
+    }
+  }, []);
   
   // Pre-calculate normalized remarks map for fast fuzzy matching
   const normalizedRemarksMap = useMemo(() => {
@@ -848,9 +907,7 @@ export function Dashboard() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'kpi'>('table');
-  const lastUpdatedRef = useRef<number | null>(null);
 
   // Filters State
   const [searchTerm, setSearchTerm] = useState('');
@@ -913,62 +970,14 @@ export function Dashboard() {
       }
       
       if (allOrders.length > 0) {
-        setData(allOrders);
-        if (mainData.lastUpdated) {
-          setLastUpdated(mainData.lastUpdated);
-        }
-        try {
-          localStorage.setItem('production_dashboard_data', JSON.stringify(allOrders));
-          if (mainData.lastUpdated) localStorage.setItem('production_dashboard_last_updated', String(mainData.lastUpdated));
-        } catch (e) {}
+        const ts = mainData.lastUpdated || Date.now();
+        updateDashboardData(allOrders, ts, 'firestore_v3');
       }
     }, (err: any) => {
       console.warn('Dashboard V3 sync notice:', err?.message || err);
     });
 
-    // B. Dashboard Legacy Meta Sync
-    const unsubDashboardMeta = onSnapshot(doc(db, 'dashboardData', 'meta'), async (snap) => {
-      if (!isMounted || !snap.exists()) return;
-      const meta = snap.data();
-      if (!meta) return;
-
-      if (meta.orders && Array.isArray(meta.orders) && meta.orders.length > 0) {
-        setData(meta.orders);
-        if (meta.lastUpdated) setLastUpdated(meta.lastUpdated);
-        try {
-          localStorage.setItem('production_dashboard_data', JSON.stringify(meta.orders));
-        } catch (e) {}
-      } else if (meta.chunkCount && meta.chunkCount > 0) {
-        const chunks: any[] = [];
-        for (let i = 0; i < meta.chunkCount; i++) {
-          try {
-            const cSnap = await getDoc(doc(db, 'dashboardData', `chunk_${i}`));
-            if (cSnap.exists() && cSnap.data().orders) {
-              chunks.push(...cSnap.data().orders);
-            }
-          } catch (e) {}
-        }
-        if (chunks.length > 0) {
-          setData(chunks);
-          if (meta.lastUpdated) setLastUpdated(meta.lastUpdated);
-          try {
-            localStorage.setItem('production_dashboard_data', JSON.stringify(chunks));
-          } catch (e) {}
-        }
-      }
-    }, () => {});
-
-    // C. Dashboard Legacy Main Sync
-    const unsubDashboardMain = onSnapshot(doc(db, 'dashboardData', 'main'), (snap) => {
-      if (!isMounted || !snap.exists()) return;
-      const mainData = snap.data();
-      if (mainData?.orders && Array.isArray(mainData.orders) && mainData.orders.length > 0) {
-        setData(mainData.orders);
-        if (mainData.lastUpdated) setLastUpdated(mainData.lastUpdated);
-      }
-    }, () => {});
-
-    // D. Remarks Sync (remarks_v2/all)
+    // B. Remarks Sync (remarks_v2/all)
     const unsubRemarks = onSnapshot(doc(db, 'remarks_v2', 'all'), (snap) => {
       if (snap.exists() && isMounted) {
         const newRemarks = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
@@ -1000,7 +1009,7 @@ export function Dashboard() {
       console.warn('Remarks sync error:', err);
     });
 
-    // E. Production Lines Sync (production_lines_v2/all)
+    // C. Production Lines Sync (production_lines_v2/all)
     const unsubProductionLines = onSnapshot(doc(db, 'production_lines_v2', 'all'), (snap) => {
       if (snap.exists() && isMounted) {
         const newLines = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
@@ -1032,7 +1041,7 @@ export function Dashboard() {
       console.warn('Production lines sync error:', err);
     });
 
-    // F. CIF Offerings Sync (cif_offerings_v2/all)
+    // D. CIF Offerings Sync (cif_offerings_v2/all)
     const unsubCifOfferings = onSnapshot(doc(db, 'cif_offerings_v2', 'all'), (snap) => {
       if (snap.exists() && isMounted) {
         const newCif = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
@@ -1067,13 +1076,11 @@ export function Dashboard() {
     return () => {
       isMounted = false;
       unsubDashboardV3();
-      unsubDashboardMeta();
-      unsubDashboardMain();
       unsubRemarks();
       unsubProductionLines();
       unsubCifOfferings();
     };
-  }, []);
+  }, [updateDashboardData]);
 
   // 3. Multi-PC Real-Time Sync & Server Backup Integration (SSE + /api/remarks + /api/dashboard)
   useEffect(() => {
@@ -1158,10 +1165,7 @@ export function Dashboard() {
       .then(serverDashboard => {
         if (!isMounted || !serverDashboard?.data || !Array.isArray(serverDashboard.data)) return;
         if (serverDashboard.data.length > 0) {
-          setData(serverDashboard.data);
-          if (serverDashboard.lastUpdated) {
-            setLastUpdated(serverDashboard.lastUpdated);
-          }
+          updateDashboardData(serverDashboard.data, serverDashboard.lastUpdated || Date.now(), 'server_api');
         }
       })
       .catch(() => {});
@@ -1185,10 +1189,7 @@ export function Dashboard() {
               setCifOfferings(prev => ({ ...payload.cifOfferings, ...prev }));
             }
             if (payload.dashboard?.data && Array.isArray(payload.dashboard.data) && payload.dashboard.data.length > 0) {
-              setData(payload.dashboard.data);
-              if (payload.dashboard.lastUpdated) {
-                setLastUpdated(payload.dashboard.lastUpdated);
-              }
+              updateDashboardData(payload.dashboard.data, payload.dashboard.lastUpdated || Date.now(), 'sse_init');
             }
           } else if (payload.type === 'remark' && payload.id) {
             setRemarks(prev => {
@@ -1239,97 +1240,17 @@ export function Dashboard() {
               return merged;
             });
           } else if (payload.type === 'dashboard' && payload.data && Array.isArray(payload.data)) {
-            setData(payload.data);
-            if (payload.lastUpdated) {
-              setLastUpdated(payload.lastUpdated);
-            }
-            try {
-              localStorage.setItem('production_dashboard_data', JSON.stringify(payload.data));
-            } catch (e) {}
+            updateDashboardData(payload.data, payload.lastUpdated || Date.now(), 'sse_dashboard');
           }
         } catch (e) {}
       };
-    } catch (e) {}
-
-    // Auto-recover from localStorage (offline fallback)
-    try {
-      const dataKeys = ['production_dashboard_data', 'production_data', 'dashboard_data', 'orders_data', 'excel_data'];
-      const remarkKeys = ['production_dashboard_remarks', 'remarks', 'app_remarks'];
-      const lineKeys = ['production_dashboard_production_lines', 'production_lines', 'app_production_lines'];
-      const cifKeys = ['production_dashboard_cif_offerings', 'cif_offerings', 'app_cif_offerings'];
-
-      let recoveredData: ProductionOrder[] | null = null;
-      for (const k of dataKeys) {
-        const val = localStorage.getItem(k);
-        if (val) {
-          try {
-            const p = JSON.parse(val);
-            if (Array.isArray(p) && p.length > 0) {
-              recoveredData = p;
-              break;
-            }
-          } catch (e) {}
-        }
-      }
-
-      let recoveredRemarks: Record<string, { text: string; updatedAt: number | null }> = {};
-      for (const k of remarkKeys) {
-        const val = localStorage.getItem(k);
-        if (val) {
-          try {
-            const p = JSON.parse(val);
-            if (p && typeof p === 'object') {
-              recoveredRemarks = { ...recoveredRemarks, ...p };
-            }
-          } catch (e) {}
-        }
-      }
-
-      let recoveredLines: Record<string, { text: string; updatedAt: number | null }> = {};
-      for (const k of lineKeys) {
-        const val = localStorage.getItem(k);
-        if (val) {
-          try {
-            const p = JSON.parse(val);
-            if (p && typeof p === 'object') {
-              recoveredLines = { ...recoveredLines, ...p };
-            }
-          } catch (e) {}
-        }
-      }
-
-      let recoveredCif: Record<string, { text: string; updatedAt: number | null }> = {};
-      for (const k of cifKeys) {
-        const val = localStorage.getItem(k);
-        if (val) {
-          try {
-            const p = JSON.parse(val);
-            if (p && typeof p === 'object') {
-              recoveredCif = { ...recoveredCif, ...p };
-            }
-          } catch (e) {}
-        }
-      }
-
-      if (recoveredData) {
-        setData(prev => (prev && prev.length > 0 ? prev : recoveredData));
-      }
-      if (Object.keys(recoveredRemarks).length > 0) {
-        setRemarks(prev => ({ ...recoveredRemarks, ...prev }));
-      }
-      if (Object.keys(recoveredLines).length > 0) {
-        setProductionLines(prev => ({ ...recoveredLines, ...prev }));
-      }
-      if (Object.keys(recoveredCif).length > 0) {
-        setCifOfferings(prev => ({ ...recoveredCif, ...prev }));
-      }
     } catch (e) {}
 
     return () => {
       isMounted = false;
       eventSource?.close();
     };
-  }, []);
+  }, [updateDashboardData]);
 
   const handleRemarkChange = async (id: string, text: string) => {
     const updated = Date.now();
@@ -1419,11 +1340,8 @@ export function Dashboard() {
     const now = Date.now();
     const uploadId = now.toString();
 
-    // 1. Immediately store in localStorage & send to Express Server for instant multi-PC SSE broadcast
-    try {
-      localStorage.setItem('production_dashboard_data', JSON.stringify(parsedData));
-      localStorage.setItem('production_dashboard_last_updated', String(now));
-    } catch (e) {}
+    // 1. Immediately update state, timestamp ref, and localStorage via updateDashboardData
+    updateDashboardData(parsedData, now, 'upload');
 
     // Send immediately to Express Server API so all connected PCs update instantly via SSE
     fetch('/api/dashboard', {
@@ -1455,19 +1373,6 @@ export function Dashboard() {
           });
         }
       }
-
-      // Also set dashboardData/meta and dashboardData/main for legacy listeners
-      await setDoc(doc(db, 'dashboardData', 'meta'), {
-        chunkCount: chunks.length,
-        lastUpdated: now,
-        uploadId: uploadId
-      }).catch(() => {});
-
-      await setDoc(doc(db, 'dashboardData', 'main'), {
-        orders: parsedData,
-        lastUpdated: now,
-        uploadId: uploadId
-      }).catch(() => {});
 
       setLoadingState('idle');
     } catch (err: any) {
@@ -2677,11 +2582,7 @@ export function Dashboard() {
               const dashRes = await fetch('/api/dashboard');
               const serverDash = await safeJson(dashRes);
               if (serverDash?.data && Array.isArray(serverDash.data) && serverDash.data.length > 0) {
-                setData(serverDash.data);
-                if (serverDash.lastUpdated) setLastUpdated(serverDash.lastUpdated);
-                try {
-                  localStorage.setItem('production_dashboard_data', JSON.stringify(serverDash.data));
-                } catch (e) {}
+                updateDashboardData(serverDash.data, serverDash.lastUpdated || Date.now(), 'recovery');
               }
 
               setTimeout(() => setRecoveryMessage(null), 6000);
