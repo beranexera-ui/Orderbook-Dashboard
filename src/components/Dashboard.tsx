@@ -959,13 +959,19 @@ export function Dashboard() {
       const chunkCount = mainData.chunkCount || 1;
       
       if (chunkCount > 1) {
-        for (let i = 1; i < chunkCount; i++) {
-          try {
-            const partSnap = await getDoc(doc(db, 'dashboard_v3', `part_${i}`));
-            if (partSnap.exists() && partSnap.data().orders) {
+        try {
+          const partPromises: Promise<any>[] = [];
+          for (let i = 1; i < chunkCount; i++) {
+            partPromises.push(getDoc(doc(db, 'dashboard_v3', `part_${i}`)));
+          }
+          const partSnaps = await Promise.all(partPromises);
+          for (const partSnap of partSnaps) {
+            if (partSnap && partSnap.exists() && Array.isArray(partSnap.data()?.orders)) {
               allOrders = allOrders.concat(partSnap.data().orders);
             }
-          } catch (e) {}
+          }
+        } catch (e) {
+          console.warn("Failed loading some order chunks:", e);
         }
       }
       
@@ -1358,13 +1364,8 @@ export function Dashboard() {
         chunks.push(parsedData.slice(i, i + CHUNK_SIZE));
       }
 
-      await setDoc(doc(db, 'dashboard_v3', 'main'), {
-        orders: chunks[0] || [],
-        chunkCount: chunks.length,
-        lastUpdated: now,
-        uploadId: uploadId
-      });
-
+      // CRITICAL: Write all part documents FIRST before setting main document
+      // so that when main document snapshot fires on other PCs, all parts are already in Firestore!
       if (chunks.length > 1) {
         for (let i = 1; i < chunks.length; i++) {
           await setDoc(doc(db, 'dashboard_v3', `part_${i}`), {
@@ -1373,6 +1374,14 @@ export function Dashboard() {
           });
         }
       }
+
+      // Now set main document LAST to trigger snapshot notification across all connected devices
+      await setDoc(doc(db, 'dashboard_v3', 'main'), {
+        orders: chunks[0] || [],
+        chunkCount: chunks.length,
+        lastUpdated: now,
+        uploadId: uploadId
+      });
 
       setLoadingState('idle');
     } catch (err: any) {
