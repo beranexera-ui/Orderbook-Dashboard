@@ -969,10 +969,11 @@ export function Dashboard() {
     if (!newOrders || !Array.isArray(newOrders) || newOrders.length === 0) return;
 
     const isAuthoritative = source === 'firestore_v3' || source === 'upload' || source === 'manual_sync';
+    const isLiveSsePush = source === 'sse_dashboard' && Boolean(uploadId) && uploadId !== appliedCloudUploadIdRef.current;
     const hasNoData = !dataRef.current || dataRef.current.length === 0;
     const isNewerTimestamp = timestamp > lastUpdatedRef.current;
 
-    if (isAuthoritative || hasNoData || (isNewerTimestamp && (!uploadId || uploadId !== appliedCloudUploadIdRef.current))) {
+    if (isAuthoritative || isLiveSsePush || hasNoData || (isNewerTimestamp && (!uploadId || uploadId !== appliedCloudUploadIdRef.current))) {
       lastUpdatedRef.current = timestamp;
       if (uploadId) {
         appliedCloudUploadIdRef.current = uploadId;
