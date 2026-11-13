@@ -797,6 +797,83 @@ function getRowProductionLine(
   return { text: '', updatedAt: null };
 }
 
+function isFirestoreQuotaError(msg: string): boolean {
+  return /quota exceeded|resource-exhausted|free daily read units/i.test(msg);
+}
+
+async function compressOrdersToBase64(orders: ProductionOrder[]): Promise<string | null> {
+  if (typeof CompressionStream === 'undefined') return null;
+  try {
+    const tuples = orders.map(item => [
+      item.id || '', item.legacyId || '', item.buyer || '', item.groupTechClass || '', item.buyerDivisionName || '',
+      item.styleNo || '', item.custStyleNo || '', item.vpoNo || '', item.shipmentMode || '', item.colorCode || '',
+      item.colorName || '', item.destination || '', item.packMethod || '', item.scheduleNo || '', item.planDelDate || '',
+      item.ped || '', item.weekNo || '', Number(item.coQty) || 0, Number(item.cumSewInQty) || 0, Number(item.cumSewOutQty) || 0,
+      Number(item.cumSewOutRejQty) || 0, Number(item.cumCTNQty) || 0, item.statusText || '', Number(item.deliveredQty) || 0,
+      item.cifOffering || '', item.remark || ''
+    ]);
+    const jsonBytes = new TextEncoder().encode(JSON.stringify(tuples));
+    const stream = new Blob([jsonBytes]).stream().pipeThrough(new CompressionStream('gzip'));
+    const compressedBuf = await new Response(stream).arrayBuffer();
+    const bytes = new Uint8Array(compressedBuf);
+    let binary = '';
+    const CHUNK = 0x4000;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(binary);
+  } catch (e) {
+    console.warn('Gzip compression fallback:', e);
+    return null;
+  }
+}
+
+async function decompressOrdersFromBase64(base64: string): Promise<ProductionOrder[]> {
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error('Browser does not support DecompressionStream');
+  }
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  const decompressedText = await new Response(stream).text();
+  const parsed = JSON.parse(decompressedText);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map((row: any) => {
+    if (!Array.isArray(row)) return row as ProductionOrder;
+    return {
+      id: String(row[0] ?? ''),
+      legacyId: String(row[1] ?? ''),
+      buyer: String(row[2] ?? ''),
+      groupTechClass: String(row[3] ?? ''),
+      buyerDivisionName: String(row[4] ?? ''),
+      styleNo: String(row[5] ?? ''),
+      custStyleNo: String(row[6] ?? ''),
+      vpoNo: String(row[7] ?? ''),
+      shipmentMode: String(row[8] ?? ''),
+      colorCode: String(row[9] ?? ''),
+      colorName: String(row[10] ?? ''),
+      destination: String(row[11] ?? ''),
+      packMethod: String(row[12] ?? ''),
+      scheduleNo: String(row[13] ?? ''),
+      planDelDate: String(row[14] ?? ''),
+      ped: String(row[15] ?? ''),
+      weekNo: String(row[16] ?? ''),
+      coQty: Number(row[17]) || 0,
+      cumSewInQty: Number(row[18]) || 0,
+      cumSewOutQty: Number(row[19]) || 0,
+      cumSewOutRejQty: Number(row[20]) || 0,
+      cumCTNQty: Number(row[21]) || 0,
+      statusText: String(row[22] ?? ''),
+      deliveredQty: Number(row[23]) || 0,
+      cifOffering: String(row[24] ?? ''),
+      remark: String(row[25] ?? ''),
+    };
+  });
+}
+
 export function Dashboard() {
   const [data, setData] = useState<ProductionOrder[] | null>(() => {
     try {
@@ -841,6 +918,7 @@ export function Dashboard() {
   const [syncStatus, setSyncStatus] = useState<'connecting' | 'synced' | 'syncing' | 'error'>('connecting');
   const [syncError, setSyncError] = useState<string | null>(null);
   const [listenerNonce, setListenerNonce] = useState(0);
+  const retryAttemptRef = useRef(0);
 
   const [remarks, setRemarks] = useState<Record<string, { text: string, updatedAt: number | null }>>(() => {
     try {
@@ -997,41 +1075,49 @@ export function Dashboard() {
       return;
     }
 
-    let allOrders: ProductionOrder[] = Array.isArray(mainData.orders) ? [...mainData.orders] : [];
-    const chunkCount = mainData.chunkCount || 1;
+    let allOrders: ProductionOrder[] = [];
 
-    if (chunkCount > 1) {
-      setSyncStatus('syncing');
-      const fetchPart = async (index: number, attempt = 0): Promise<ProductionOrder[]> => {
-        const partRef = doc(db, 'dashboard_v3', `part_${index}`);
-        let partSnap;
-        try {
-          partSnap = await getDocFromServer(partRef);
-        } catch {
-          partSnap = await getDoc(partRef);
-        }
+    if (typeof mainData.compressedGzip === 'string' && mainData.compressedGzip.length > 0) {
+      allOrders = await decompressOrdersFromBase64(mainData.compressedGzip);
+    } else {
+      allOrders = Array.isArray(mainData.orders) ? [...mainData.orders] : [];
+      const chunkCount = mainData.chunkCount || 1;
 
-        if (!partSnap.exists()) {
-          if (attempt < 2) {
+      if (chunkCount > 1) {
+        setSyncStatus('syncing');
+        const fetchPart = async (index: number, attempt = 0): Promise<ProductionOrder[]> => {
+          const partRef = doc(db, 'dashboard_v3', `part_${index}`);
+          let partSnap;
+          try {
+            partSnap = (forceServerParts || attempt > 0)
+              ? await getDocFromServer(partRef)
+              : await getDoc(partRef);
+          } catch {
+            partSnap = await getDoc(partRef);
+          }
+
+          if (!partSnap.exists()) {
+            if (attempt < 2) {
+              await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+              return fetchPart(index, attempt + 1);
+            }
+            throw new Error(`Missing orderbook chunk part_${index}`);
+          }
+
+          const partData = partSnap.data();
+          if (mainData.uploadId && partData?.uploadId && partData.uploadId !== mainData.uploadId && attempt < 2) {
             await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
             return fetchPart(index, attempt + 1);
           }
-          throw new Error(`Missing orderbook chunk part_${index}`);
+
+          return Array.isArray(partData?.orders) ? partData.orders : [];
+        };
+
+        const partIndices = Array.from({ length: chunkCount - 1 }, (_, idx) => idx + 1);
+        const partResults = await Promise.all(partIndices.map(i => fetchPart(i)));
+        for (const chunkOrders of partResults) {
+          allOrders = allOrders.concat(chunkOrders);
         }
-
-        const partData = partSnap.data();
-        if (mainData.uploadId && partData?.uploadId && partData.uploadId !== mainData.uploadId && attempt < 2) {
-          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-          return fetchPart(index, attempt + 1);
-        }
-
-        return Array.isArray(partData?.orders) ? partData.orders : [];
-      };
-
-      const partIndices = Array.from({ length: chunkCount - 1 }, (_, idx) => idx + 1);
-      const partResults = await Promise.all(partIndices.map(i => fetchPart(i)));
-      for (const chunkOrders of partResults) {
-        allOrders = allOrders.concat(chunkOrders);
       }
     }
 
@@ -1061,20 +1147,21 @@ export function Dashboard() {
     } catch (err: any) {
       const msg = err?.message || 'Unable to reach cloud sync server';
       setSyncStatus('error');
-      setSyncError(msg.includes('Quota exceeded') ? 'Firestore daily read quota exceeded. It resets in 24 hours.' : msg);
+      setSyncError(isFirestoreQuotaError(msg) ? 'Firestore free daily read quota exceeded. It resets in 24h (or upgrade to Blaze).' : msg);
     }
   }, [applyDashboardSnapshot]);
 
   // 1. Re-connect automatically when network comes back online
   useEffect(() => {
     const handleOnline = () => {
+      retryAttemptRef.current = 0;
       setListenerNonce(n => n + 1);
     };
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
   }, []);
 
-  // 2. Real-time Sync from Firestore (Single-Doc Ultra-Low-Read Mode for Dashboard, Remarks, Lines, and CIF)
+  // 2. Real-time Sync from Firestore (Single-Doc Compressed Low-Read Mode for Dashboard, Remarks, Lines, and CIF)
   useEffect(() => {
     let isMounted = true;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1083,6 +1170,7 @@ export function Dashboard() {
     // A. Dashboard Data Sync (v3 main document)
     const unsubDashboardV3 = onSnapshot(doc(db, 'dashboard_v3', 'main'), async (snap) => {
       if (!isMounted) return;
+      retryAttemptRef.current = 0;
       if (!snap.exists()) {
         setSyncStatus('synced');
         return;
@@ -1100,22 +1188,27 @@ export function Dashboard() {
         const msg = err?.message || String(err);
         console.warn('Dashboard V3 chunk load error:', msg);
         setSyncStatus('error');
-        setSyncError(msg.includes('Quota exceeded') ? 'Firestore daily quota exceeded. Will reset in 24h.' : `Cloud sync error: ${msg}`);
+        setSyncError(isFirestoreQuotaError(msg) ? 'Firestore free daily read quota exceeded. Resets in 24h.' : `Cloud sync error: ${msg}`);
       }
     }, (err: any) => {
       if (!isMounted) return;
       const msg = err?.message || String(err);
       console.warn('Dashboard V3 sync error:', msg);
       setSyncStatus('error');
-      if (msg.includes('Quota exceeded')) {
-        const quotaMsg = 'Firestore free tier quota exceeded. It will reset in 24 hours.';
+      if (isFirestoreQuotaError(msg)) {
+        const quotaMsg = 'Firestore free tier daily quota exceeded. Resets in 24h — upgrade Firebase Blaze or wait for daily reset.';
         setSyncError(quotaMsg);
         setError(quotaMsg);
       } else {
         setSyncError('Cloud listener disconnected. Reconnecting...');
+        // Exponential backoff (30s, 60s, 120s, max 300s) to avoid burning read quota on flaky networks
+        const delayMs = Math.min(300000, 30000 * Math.pow(2, retryAttemptRef.current));
+        retryAttemptRef.current += 1;
         retryTimer = setTimeout(() => {
-          if (isMounted) setListenerNonce(n => n + 1);
-        }, 5000);
+          if (isMounted && !document.hidden) {
+            setListenerNonce(n => n + 1);
+          }
+        }, delayMs);
       }
     });
 
@@ -1503,45 +1596,59 @@ export function Dashboard() {
       body: JSON.stringify({ data: cleanedData, lastUpdated: now, uploadId })
     }).catch(() => {});
 
-    // 3. Persist to Firestore with safe 250-item chunks (~180KB each, well below 1MB limit)
+    // 3. Persist to Firestore using Gzip single-doc compression (~90% fewer Read/Write units!),
+    //    falling back to safe 250-item chunks only if compressed payload exceeds 750KB.
     try {
-      const CHUNK_SIZE = 250;
-      const chunks: ProductionOrder[][] = [];
-      for (let i = 0; i < cleanedData.length; i += CHUNK_SIZE) {
-        chunks.push(cleanedData.slice(i, i + CHUNK_SIZE));
-      }
-
-      let syncedRows = 0;
-
-      // Write all part_1..part_N documents FIRST in parallel batches of 4
-      if (chunks.length > 1) {
-        for (let batchStart = 1; batchStart < chunks.length; batchStart += 4) {
-          const batchIndices = [];
-          for (let j = batchStart; j < Math.min(batchStart + 4, chunks.length); j++) {
-            batchIndices.push(j);
-          }
-          await Promise.all(
-            batchIndices.map(async (idx) => {
-              await setDoc(doc(db, 'dashboard_v3', `part_${idx}`), {
-                orders: chunks[idx],
-                uploadId
-              });
-              syncedRows += chunks[idx].length;
-            })
-          );
-          setUploadProgress({ current: syncedRows, total: cleanedData.length });
+      const compressedGzip = await compressOrdersToBase64(cleanedData);
+      if (compressedGzip && compressedGzip.length < 750000) {
+        await setDoc(doc(db, 'dashboard_v3', 'main'), {
+          compressedGzip,
+          format: 'gzip_v1',
+          chunkCount: 1,
+          totalCount: cleanedData.length,
+          lastUpdated: now,
+          uploadId,
+          serverUpdatedAt: serverTimestamp(),
+        });
+      } else {
+        const CHUNK_SIZE = 250;
+        const chunks: ProductionOrder[][] = [];
+        for (let i = 0; i < cleanedData.length; i += CHUNK_SIZE) {
+          chunks.push(cleanedData.slice(i, i + CHUNK_SIZE));
         }
-      }
 
-      // Write main document LAST to atomically notify all connected PCs
-      await setDoc(doc(db, 'dashboard_v3', 'main'), {
-        orders: chunks[0] || [],
-        chunkCount: chunks.length,
-        totalCount: cleanedData.length,
-        lastUpdated: now,
-        uploadId: uploadId,
-        serverUpdatedAt: serverTimestamp(),
-      });
+        let syncedRows = 0;
+
+        // Write all part_1..part_N documents FIRST in parallel batches of 4
+        if (chunks.length > 1) {
+          for (let batchStart = 1; batchStart < chunks.length; batchStart += 4) {
+            const batchIndices = [];
+            for (let j = batchStart; j < Math.min(batchStart + 4, chunks.length); j++) {
+              batchIndices.push(j);
+            }
+            await Promise.all(
+              batchIndices.map(async (idx) => {
+                await setDoc(doc(db, 'dashboard_v3', `part_${idx}`), {
+                  orders: chunks[idx],
+                  uploadId
+                });
+                syncedRows += chunks[idx].length;
+              })
+            );
+            setUploadProgress({ current: syncedRows, total: cleanedData.length });
+          }
+        }
+
+        // Write main document LAST to atomically notify all connected PCs
+        await setDoc(doc(db, 'dashboard_v3', 'main'), {
+          orders: chunks[0] || [],
+          chunkCount: chunks.length,
+          totalCount: cleanedData.length,
+          lastUpdated: now,
+          uploadId: uploadId,
+          serverUpdatedAt: serverTimestamp(),
+        });
+      }
 
       setUploadProgress({ current: cleanedData.length, total: cleanedData.length });
       setSyncStatus('synced');
@@ -1551,7 +1658,7 @@ export function Dashboard() {
       const msg = err?.message || String(err);
       console.error('Firestore Upload Sync Error:', msg);
       setSyncStatus('error');
-      const friendlyMsg = msg.includes('Quota exceeded')
+      const friendlyMsg = isFirestoreQuotaError(msg)
         ? 'Firestore daily quota exceeded! Other PCs cannot receive this upload until quota resets.'
         : `Cloud sync upload failed (${msg}). Other PCs may not see this update.`;
       setSyncError(friendlyMsg);
@@ -1779,9 +1886,7 @@ export function Dashboard() {
             const syncExtractedCif = async () => {
               try {
                 const cifRef = doc(db, 'cif_offerings_v2', 'all');
-                const snap = await getDoc(cifRef);
-                const existing = snap.exists() ? snap.data() : {};
-                await setDoc(cifRef, { ...existing, ...excelExtractedCifOfferings }, { merge: true });
+                await setDoc(cifRef, excelExtractedCifOfferings, { merge: true });
               } catch (err) {
                 console.error("Batch CIF offerings sync failed", err);
               }
@@ -2774,7 +2879,7 @@ export function Dashboard() {
               const dashRes = await fetch('/api/dashboard');
               const serverDash = await safeJson(dashRes);
               if (serverDash?.data && Array.isArray(serverDash.data) && serverDash.data.length > 0) {
-                updateDashboardData(serverDash.data, serverDash.lastUpdated || Date.now(), 'recovery');
+                updateDashboardData(serverDash.data, serverDash.lastUpdated || Date.now(), 'manual_sync', serverDash.uploadId);
               }
 
               setTimeout(() => setRecoveryMessage(null), 6000);

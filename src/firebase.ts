@@ -1,5 +1,10 @@
 import { initializeApp } from "firebase/app";
-import { initializeFirestore, setLogLevel } from "firebase/firestore";
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  setLogLevel,
+} from "firebase/firestore";
 import firebaseConfigData from "../firebase-applet-config.json";
 
 // Log only errors to keep console clean while surfacing real sync issues
@@ -19,6 +24,9 @@ export const db = initializeFirestore(
   app,
   {
     experimentalAutoDetectLongPolling: true,
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
   },
   firebaseConfigData.firestoreDatabaseId
 );
