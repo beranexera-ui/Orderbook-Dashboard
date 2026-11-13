@@ -1,9 +1,9 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer, BarChart2, Table } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer, BarChart2, Table, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, onSnapshot, collection, getDocs, writeBatch, getDocFromServer, runTransaction } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, getDocFromServer, serverTimestamp } from 'firebase/firestore';
 import { KPIView } from './KPIView';
 import { SewOutReportModal } from './SewOutReportModal';
 import { PrintOrientationModal } from './PrintOrientationModal';
@@ -821,10 +821,26 @@ export function Dashboard() {
   });
 
   const lastUpdatedRef = useRef<number>(lastUpdated || 0);
+  const dataRef = useRef<ProductionOrder[] | null>(data);
+  useEffect(() => {
+    dataRef.current = data;
+  }, [data]);
+
+  const appliedCloudUploadIdRef = useRef<string | null>((() => {
+    try {
+      if (data && data.length > 0) {
+        return localStorage.getItem('production_dashboard_upload_id');
+      }
+    } catch (e) {}
+    return null;
+  })());
 
   const [isDragging, setIsDragging] = useState(false);
   const [loadingState, setLoadingState] = useState<'idle' | 'reading' | 'parsing' | 'uploading'>('idle');
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
+  const [syncStatus, setSyncStatus] = useState<'connecting' | 'synced' | 'syncing' | 'error'>('connecting');
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [listenerNonce, setListenerNonce] = useState(0);
 
   const [remarks, setRemarks] = useState<Record<string, { text: string, updatedAt: number | null }>>(() => {
     try {
@@ -850,20 +866,45 @@ export function Dashboard() {
     return {};
   });
 
-  const updateDashboardData = useCallback((newOrders: ProductionOrder[], timestamp: number, _source: string) => {
-    if (!newOrders || !Array.isArray(newOrders) || newOrders.length === 0) return;
-    
-    // Only accept updates that are newer than or equal to our current timestamp, or if we currently have no data
-    if (timestamp >= lastUpdatedRef.current || lastUpdatedRef.current === 0) {
-      lastUpdatedRef.current = timestamp;
-      setLastUpdated(timestamp);
-      setData(newOrders);
-      try {
-        localStorage.setItem('production_dashboard_data', JSON.stringify(newOrders));
-        localStorage.setItem('production_dashboard_last_updated', String(timestamp));
-      } catch (e) {}
+  const saveLocalDashboardCache = useCallback((orders: ProductionOrder[], timestamp: number, uploadId?: string | null) => {
+    try {
+      // Remove legacy duplicate keys to prevent hitting browser 5MB localStorage quota
+      ['production_data', 'dashboard_data', 'orders_data', 'excel_data'].forEach(k => {
+        try { localStorage.removeItem(k); } catch {}
+      });
+      localStorage.setItem('production_dashboard_data', JSON.stringify(orders));
+      localStorage.setItem('production_dashboard_last_updated', String(timestamp));
+      if (uploadId) {
+        localStorage.setItem('production_dashboard_upload_id', uploadId);
+      }
+    } catch (e) {
+      console.warn('Local cache save warning:', e);
     }
   }, []);
+
+  const updateDashboardData = useCallback((
+    newOrders: ProductionOrder[],
+    timestamp: number,
+    source: 'firestore_v3' | 'upload' | 'manual_sync' | 'server_api' | 'sse_init' | 'sse_dashboard',
+    uploadId?: string | null
+  ) => {
+    if (!newOrders || !Array.isArray(newOrders) || newOrders.length === 0) return;
+
+    const isAuthoritative = source === 'firestore_v3' || source === 'upload' || source === 'manual_sync';
+    const hasNoData = !dataRef.current || dataRef.current.length === 0;
+    const isNewerTimestamp = timestamp > lastUpdatedRef.current;
+
+    if (isAuthoritative || hasNoData || (isNewerTimestamp && (!uploadId || uploadId !== appliedCloudUploadIdRef.current))) {
+      lastUpdatedRef.current = timestamp;
+      if (uploadId) {
+        appliedCloudUploadIdRef.current = uploadId;
+      }
+      dataRef.current = newOrders;
+      setLastUpdated(timestamp);
+      setData(newOrders);
+      saveLocalDashboardCache(newOrders, timestamp, uploadId);
+    }
+  }, [saveLocalDashboardCache]);
   
   // Pre-calculate normalized remarks map for fast fuzzy matching
   const normalizedRemarksMap = useMemo(() => {
@@ -931,56 +972,151 @@ export function Dashboard() {
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
   const [isRecovering, setIsRecovering] = useState(false);
 
-  // 1. Initial validation & setup
-  useEffect(() => {
-    async function testConnection() {
-      try {
-        await getDoc(doc(db, 'dashboard_v3', 'main'));
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('Quota exceeded')) {
-          setError("Firestore free tier quota exceeded. It will reset in 24 hours.");
+  // Helper to apply a dashboard_v3/main snapshot and fetch all chunk parts reliably
+  const applyDashboardSnapshot = useCallback(async (mainData: any, forceServerParts = false) => {
+    if (!mainData) return;
+
+    const cloudUploadId = String(mainData.uploadId || mainData.lastUpdated || '');
+    const expectedTotal = typeof mainData.totalCount === 'number' ? mainData.totalCount : null;
+
+    // Skip redundant part reads if this exact cloud upload is already loaded cleanly in memory
+    if (
+      !forceServerParts &&
+      dataRef.current &&
+      dataRef.current.length > 0 &&
+      cloudUploadId &&
+      appliedCloudUploadIdRef.current === cloudUploadId &&
+      (expectedTotal === null || dataRef.current.length === expectedTotal)
+    ) {
+      if (mainData.lastUpdated && mainData.lastUpdated !== lastUpdatedRef.current) {
+        lastUpdatedRef.current = mainData.lastUpdated;
+        setLastUpdated(mainData.lastUpdated);
+      }
+      setSyncStatus('synced');
+      setSyncError(null);
+      return;
+    }
+
+    let allOrders: ProductionOrder[] = Array.isArray(mainData.orders) ? [...mainData.orders] : [];
+    const chunkCount = mainData.chunkCount || 1;
+
+    if (chunkCount > 1) {
+      setSyncStatus('syncing');
+      const fetchPart = async (index: number, attempt = 0): Promise<ProductionOrder[]> => {
+        const partRef = doc(db, 'dashboard_v3', `part_${index}`);
+        let partSnap;
+        try {
+          partSnap = await getDocFromServer(partRef);
+        } catch {
+          partSnap = await getDoc(partRef);
         }
+
+        if (!partSnap.exists()) {
+          if (attempt < 2) {
+            await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+            return fetchPart(index, attempt + 1);
+          }
+          throw new Error(`Missing orderbook chunk part_${index}`);
+        }
+
+        const partData = partSnap.data();
+        if (mainData.uploadId && partData?.uploadId && partData.uploadId !== mainData.uploadId && attempt < 2) {
+          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          return fetchPart(index, attempt + 1);
+        }
+
+        return Array.isArray(partData?.orders) ? partData.orders : [];
+      };
+
+      const partIndices = Array.from({ length: chunkCount - 1 }, (_, idx) => idx + 1);
+      const partResults = await Promise.all(partIndices.map(i => fetchPart(i)));
+      for (const chunkOrders of partResults) {
+        allOrders = allOrders.concat(chunkOrders);
       }
     }
-    testConnection();
+
+    if (allOrders.length > 0) {
+      const ts = mainData.lastUpdated || Date.now();
+      updateDashboardData(
+        allOrders,
+        ts,
+        forceServerParts ? 'manual_sync' : 'firestore_v3',
+        cloudUploadId || String(ts)
+      );
+      setSyncStatus('synced');
+      setSyncError(null);
+    }
+  }, [updateDashboardData]);
+
+  const handleManualCloudSync = useCallback(async () => {
+    setSyncStatus('syncing');
+    setSyncError(null);
+    try {
+      const mainSnap = await getDocFromServer(doc(db, 'dashboard_v3', 'main'));
+      if (mainSnap.exists()) {
+        await applyDashboardSnapshot(mainSnap.data(), true);
+      } else {
+        setSyncStatus('synced');
+      }
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to reach cloud sync server';
+      setSyncStatus('error');
+      setSyncError(msg.includes('Quota exceeded') ? 'Firestore daily read quota exceeded. It resets in 24 hours.' : msg);
+    }
+  }, [applyDashboardSnapshot]);
+
+  // 1. Re-connect automatically when network comes back online
+  useEffect(() => {
+    const handleOnline = () => {
+      setListenerNonce(n => n + 1);
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
   }, []);
 
   // 2. Real-time Sync from Firestore (Single-Doc Ultra-Low-Read Mode for Dashboard, Remarks, Lines, and CIF)
   useEffect(() => {
     let isMounted = true;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    setSyncStatus('connecting');
 
     // A. Dashboard Data Sync (v3 main document)
     const unsubDashboardV3 = onSnapshot(doc(db, 'dashboard_v3', 'main'), async (snap) => {
-      if (!isMounted || !snap.exists()) return;
+      if (!isMounted) return;
+      if (!snap.exists()) {
+        setSyncStatus('synced');
+        return;
+      }
+      // Wait for server confirmation if this is only our own local pending write
+      if (snap.metadata.hasPendingWrites) return;
+
       const mainData = snap.data();
       if (!mainData) return;
-      
-      let allOrders = mainData.orders || [];
-      const chunkCount = mainData.chunkCount || 1;
-      
-      if (chunkCount > 1) {
-        try {
-          const partPromises: Promise<any>[] = [];
-          for (let i = 1; i < chunkCount; i++) {
-            partPromises.push(getDoc(doc(db, 'dashboard_v3', `part_${i}`)));
-          }
-          const partSnaps = await Promise.all(partPromises);
-          for (const partSnap of partSnaps) {
-            if (partSnap && partSnap.exists() && Array.isArray(partSnap.data()?.orders)) {
-              allOrders = allOrders.concat(partSnap.data().orders);
-            }
-          }
-        } catch (e) {
-          console.warn("Failed loading some order chunks:", e);
-        }
-      }
-      
-      if (allOrders.length > 0) {
-        const ts = mainData.lastUpdated || Date.now();
-        updateDashboardData(allOrders, ts, 'firestore_v3');
+
+      try {
+        await applyDashboardSnapshot(mainData, false);
+      } catch (err: any) {
+        if (!isMounted) return;
+        const msg = err?.message || String(err);
+        console.warn('Dashboard V3 chunk load error:', msg);
+        setSyncStatus('error');
+        setSyncError(msg.includes('Quota exceeded') ? 'Firestore daily quota exceeded. Will reset in 24h.' : `Cloud sync error: ${msg}`);
       }
     }, (err: any) => {
-      console.warn('Dashboard V3 sync notice:', err?.message || err);
+      if (!isMounted) return;
+      const msg = err?.message || String(err);
+      console.warn('Dashboard V3 sync error:', msg);
+      setSyncStatus('error');
+      if (msg.includes('Quota exceeded')) {
+        const quotaMsg = 'Firestore free tier quota exceeded. It will reset in 24 hours.';
+        setSyncError(quotaMsg);
+        setError(quotaMsg);
+      } else {
+        setSyncError('Cloud listener disconnected. Reconnecting...');
+        retryTimer = setTimeout(() => {
+          if (isMounted) setListenerNonce(n => n + 1);
+        }, 5000);
+      }
     });
 
     // B. Remarks Sync (remarks_v2/all)
@@ -1081,18 +1217,19 @@ export function Dashboard() {
 
     return () => {
       isMounted = false;
+      if (retryTimer) clearTimeout(retryTimer);
       unsubDashboardV3();
       unsubRemarks();
       unsubProductionLines();
       unsubCifOfferings();
     };
-  }, [updateDashboardData]);
+  }, [applyDashboardSnapshot, listenerNonce]);
 
   // 3. Multi-PC Real-Time Sync & Server Backup Integration (SSE + /api/remarks + /api/dashboard)
   useEffect(() => {
     let isMounted = true;
 
-    // Load remarks immediately from server backup (contains all 968+ remarks across weeks 41-48)
+    // Load remarks immediately from server backup
     fetch('/api/remarks')
       .then(res => safeJson(res))
       .then((serverRemarks: Record<string, { text: string; updatedAt: number | null }> | null) => {
@@ -1105,14 +1242,6 @@ export function Dashboard() {
             } catch (e) {}
             return merged;
           });
-
-          // Ensure Firestore remarks_v2/all is also primed with any missing remarks
-          const remarksRef = doc(db, 'remarks_v2', 'all');
-          getDoc(remarksRef).then(snap => {
-            if (!snap.exists() || Object.keys(snap.data() || {}).length < Object.keys(serverRemarks).length) {
-              setDoc(remarksRef, serverRemarks, { merge: true }).catch(() => {});
-            }
-          }).catch(() => {});
         }
       })
       .catch(() => {});
@@ -1130,13 +1259,6 @@ export function Dashboard() {
             } catch (e) {}
             return merged;
           });
-
-          const linesRef = doc(db, 'production_lines_v2', 'all');
-          getDoc(linesRef).then(snap => {
-            if (!snap.exists() || Object.keys(snap.data() || {}).length < Object.keys(serverLines).length) {
-              setDoc(linesRef, serverLines, { merge: true }).catch(() => {});
-            }
-          }).catch(() => {});
         }
       })
       .catch(() => {});
@@ -1154,29 +1276,22 @@ export function Dashboard() {
             } catch (e) {}
             return merged;
           });
-
-          const cifRef = doc(db, 'cif_offerings_v2', 'all');
-          getDoc(cifRef).then(snap => {
-            if (!snap.exists() || Object.keys(snap.data() || {}).length < Object.keys(serverCif).length) {
-              setDoc(cifRef, serverCif, { merge: true }).catch(() => {});
-            }
-          }).catch(() => {});
         }
       })
       .catch(() => {});
 
-    // Load dashboard order items immediately from server backup
+    // Load dashboard order items from server backup ONLY if newer or no data loaded yet
     fetch('/api/dashboard')
       .then(res => safeJson(res))
       .then(serverDashboard => {
         if (!isMounted || !serverDashboard?.data || !Array.isArray(serverDashboard.data)) return;
-        if (serverDashboard.data.length > 0) {
-          updateDashboardData(serverDashboard.data, serverDashboard.lastUpdated || Date.now(), 'server_api');
+        if (serverDashboard.data.length > 0 && serverDashboard.lastUpdated) {
+          updateDashboardData(serverDashboard.data, serverDashboard.lastUpdated, 'server_api', serverDashboard.uploadId);
         }
       })
       .catch(() => {});
 
-    // Connect to Server-Sent Events (SSE) for instant cross-device updates
+    // Connect to Server-Sent Events (SSE) for instant same-server updates
     let eventSource: EventSource | null = null;
     try {
       eventSource = new EventSource('/api/realtime');
@@ -1194,8 +1309,8 @@ export function Dashboard() {
             if (payload.cifOfferings && typeof payload.cifOfferings === 'object') {
               setCifOfferings(prev => ({ ...payload.cifOfferings, ...prev }));
             }
-            if (payload.dashboard?.data && Array.isArray(payload.dashboard.data) && payload.dashboard.data.length > 0) {
-              updateDashboardData(payload.dashboard.data, payload.dashboard.lastUpdated || Date.now(), 'sse_init');
+            if (payload.dashboard?.data && Array.isArray(payload.dashboard.data) && payload.dashboard.data.length > 0 && payload.dashboard.lastUpdated) {
+              updateDashboardData(payload.dashboard.data, payload.dashboard.lastUpdated, 'sse_init', payload.dashboard.uploadId);
             }
           } else if (payload.type === 'remark' && payload.id) {
             setRemarks(prev => {
@@ -1245,8 +1360,8 @@ export function Dashboard() {
               } catch (e) {}
               return merged;
             });
-          } else if (payload.type === 'dashboard' && payload.data && Array.isArray(payload.data)) {
-            updateDashboardData(payload.data, payload.lastUpdated || Date.now(), 'sse_dashboard');
+          } else if (payload.type === 'dashboard' && payload.data && Array.isArray(payload.data) && payload.lastUpdated) {
+            updateDashboardData(payload.data, payload.lastUpdated, 'sse_dashboard', payload.uploadId);
           }
         } catch (e) {}
       };
@@ -1341,51 +1456,106 @@ export function Dashboard() {
 
   const persistDashboardData = async (parsedData: ProductionOrder[]) => {
     setLoadingState('uploading');
+    setSyncStatus('syncing');
+    setSyncError(null);
     setUploadProgress({ current: 0, total: parsedData.length });
 
+    // Sanitize all order fields to ensure valid Firestore types (no undefined/NaN)
+    const cleanedData: ProductionOrder[] = parsedData.map(item => ({
+      id: String(item.id || ''),
+      legacyId: String(item.legacyId || ''),
+      buyer: String(item.buyer || ''),
+      groupTechClass: String(item.groupTechClass || ''),
+      buyerDivisionName: String(item.buyerDivisionName || ''),
+      styleNo: String(item.styleNo || ''),
+      custStyleNo: String(item.custStyleNo || ''),
+      vpoNo: String(item.vpoNo || ''),
+      shipmentMode: String(item.shipmentMode || ''),
+      colorCode: String(item.colorCode || ''),
+      colorName: String(item.colorName || ''),
+      destination: String(item.destination || ''),
+      packMethod: String(item.packMethod || ''),
+      scheduleNo: String(item.scheduleNo || ''),
+      planDelDate: String(item.planDelDate || ''),
+      ped: String(item.ped || ''),
+      weekNo: String(item.weekNo || ''),
+      coQty: Number.isFinite(Number(item.coQty)) ? Number(item.coQty) : 0,
+      cumSewInQty: Number.isFinite(Number(item.cumSewInQty)) ? Number(item.cumSewInQty) : 0,
+      cumSewOutQty: Number.isFinite(Number(item.cumSewOutQty)) ? Number(item.cumSewOutQty) : 0,
+      cumSewOutRejQty: Number.isFinite(Number(item.cumSewOutRejQty)) ? Number(item.cumSewOutRejQty) : 0,
+      cumCTNQty: Number.isFinite(Number(item.cumCTNQty)) ? Number(item.cumCTNQty) : 0,
+      statusText: String(item.statusText || ''),
+      deliveredQty: Number.isFinite(Number(item.deliveredQty)) ? Number(item.deliveredQty) : 0,
+      cifOffering: String(item.cifOffering || ''),
+      remark: String(item.remark || ''),
+    }));
+
     const now = Date.now();
-    const uploadId = now.toString();
+    const uploadId = `${now}_${Math.random().toString(36).slice(2, 7)}`;
 
-    // 1. Immediately update state, timestamp ref, and localStorage via updateDashboardData
-    updateDashboardData(parsedData, now, 'upload');
+    // 1. Immediately update local state, timestamp ref, and localStorage
+    updateDashboardData(cleanedData, now, 'upload', uploadId);
 
-    // Send immediately to Express Server API so all connected PCs update instantly via SSE
+    // 2. Send to Express Server API for local SSE broadcast
     fetch('/api/dashboard', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: parsedData, lastUpdated: now, uploadId })
-    }).catch(err => console.warn('Express server dashboard sync notice:', err));
+      body: JSON.stringify({ data: cleanedData, lastUpdated: now, uploadId })
+    }).catch(() => {});
 
-    // 2. Persist to Firestore (Background Cloud Storage - Single Doc Low Read Strategy)
+    // 3. Persist to Firestore with safe 250-item chunks (~180KB each, well below 1MB limit)
     try {
-      const CHUNK_SIZE = 800;
+      const CHUNK_SIZE = 250;
       const chunks: ProductionOrder[][] = [];
-      for (let i = 0; i < parsedData.length; i += CHUNK_SIZE) {
-        chunks.push(parsedData.slice(i, i + CHUNK_SIZE));
+      for (let i = 0; i < cleanedData.length; i += CHUNK_SIZE) {
+        chunks.push(cleanedData.slice(i, i + CHUNK_SIZE));
       }
 
-      // CRITICAL: Write all part documents FIRST before setting main document
-      // so that when main document snapshot fires on other PCs, all parts are already in Firestore!
+      let syncedRows = 0;
+
+      // Write all part_1..part_N documents FIRST in parallel batches of 4
       if (chunks.length > 1) {
-        for (let i = 1; i < chunks.length; i++) {
-          await setDoc(doc(db, 'dashboard_v3', `part_${i}`), {
-            orders: chunks[i],
-            uploadId
-          });
+        for (let batchStart = 1; batchStart < chunks.length; batchStart += 4) {
+          const batchIndices = [];
+          for (let j = batchStart; j < Math.min(batchStart + 4, chunks.length); j++) {
+            batchIndices.push(j);
+          }
+          await Promise.all(
+            batchIndices.map(async (idx) => {
+              await setDoc(doc(db, 'dashboard_v3', `part_${idx}`), {
+                orders: chunks[idx],
+                uploadId
+              });
+              syncedRows += chunks[idx].length;
+            })
+          );
+          setUploadProgress({ current: syncedRows, total: cleanedData.length });
         }
       }
 
-      // Now set main document LAST to trigger snapshot notification across all connected devices
+      // Write main document LAST to atomically notify all connected PCs
       await setDoc(doc(db, 'dashboard_v3', 'main'), {
         orders: chunks[0] || [],
         chunkCount: chunks.length,
+        totalCount: cleanedData.length,
         lastUpdated: now,
-        uploadId: uploadId
+        uploadId: uploadId,
+        serverUpdatedAt: serverTimestamp(),
       });
 
+      setUploadProgress({ current: cleanedData.length, total: cleanedData.length });
+      setSyncStatus('synced');
+      setSyncError(null);
       setLoadingState('idle');
     } catch (err: any) {
-      console.warn('Firestore Save Notice (operating via Express server SSE):', err);
+      const msg = err?.message || String(err);
+      console.error('Firestore Upload Sync Error:', msg);
+      setSyncStatus('error');
+      const friendlyMsg = msg.includes('Quota exceeded')
+        ? 'Firestore daily quota exceeded! Other PCs cannot receive this upload until quota resets.'
+        : `Cloud sync upload failed (${msg}). Other PCs may not see this update.`;
+      setSyncError(friendlyMsg);
+      setError(friendlyMsg);
       setLoadingState('idle');
     }
   };
@@ -1628,25 +1798,11 @@ export function Dashboard() {
               return merged;
             });
 
-            // Sync extracted remarks to Firestore in background (Optimized)
+            // Sync extracted remarks to Firestore in background (Single-Doc Optimized)
             const syncExtracted = async () => {
               try {
-                // Store all in the single document for optimized sync
                 const remarksRef = doc(db, 'remarks_v2', 'all');
-                const snap = await getDoc(remarksRef);
-                const existing = snap.exists() ? snap.data() : {};
-                await setDoc(remarksRef, { ...existing, ...excelExtractedRemarks }, { merge: true });
-                
-                // Legacy support for older clients
-                const keys = Object.keys(excelExtractedRemarks);
-                for (let i = 0; i < Math.min(keys.length, 100); i += 500) { // Limit legacy sync to avoid quota hit
-                  const batch = writeBatch(db);
-                  const chunk = keys.slice(i, i + 500);
-                  chunk.forEach(id => {
-                    batch.set(doc(db, 'remarks', id), excelExtractedRemarks[id]);
-                  });
-                  await batch.commit();
-                }
+                await setDoc(remarksRef, excelExtractedRemarks, { merge: true });
               } catch (err) {
                 console.error("Batch remark sync failed", err);
               }
@@ -1656,8 +1812,6 @@ export function Dashboard() {
 
           parsedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
 
-          setData(parsedData);
-          setLastUpdated(Date.now());
           persistDashboardData(parsedData);
           
           setSearchTerm('');
@@ -2102,12 +2256,41 @@ export function Dashboard() {
                   OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
                 </span>
               )}
-              <span className="text-slate-400 font-medium flex items-center gap-1.5 truncate">
+              <span className="font-medium flex items-center gap-1.5 truncate">
                 <span className="hidden sm:inline text-slate-300">•</span>
-                <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse inline-block"></span>
-                Cloud Sync Active
+                {syncStatus === 'error' ? (
+                  <span className="text-rose-600 flex items-center gap-1.5">
+                    <span className="w-2 h-2 bg-rose-500 rounded-full inline-block"></span>
+                    Cloud Sync Error
+                  </span>
+                ) : syncStatus === 'syncing' || syncStatus === 'connecting' ? (
+                  <span className="text-indigo-600 flex items-center gap-1.5">
+                    <Loader2 className="w-3 h-3 animate-spin inline-block" />
+                    {syncStatus === 'connecting' ? 'Connecting Cloud...' : 'Syncing Cloud...'}
+                  </span>
+                ) : (
+                  <span className="text-slate-400 flex items-center gap-1.5">
+                    <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse inline-block"></span>
+                    Cloud Sync Active
+                  </span>
+                )}
+                <button
+                  onClick={handleManualCloudSync}
+                  disabled={syncStatus === 'syncing'}
+                  title="Force refresh latest Orderbook from Cloud"
+                  className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 rounded border border-slate-200 transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3 h-3 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+                  Sync
+                </button>
               </span>
             </div>
+            {(syncError || error) && (
+              <div className="mt-2 px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700">
+                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>{syncError || error}</span>
+              </div>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2 md:gap-3">
             <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 w-full sm:w-auto">
