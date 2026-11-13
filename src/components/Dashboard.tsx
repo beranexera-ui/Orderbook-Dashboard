@@ -1,9 +1,9 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer, BarChart2, Table, RefreshCw } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, AlertCircle, Search, Package, CheckCircle, TrendingUp, AlertTriangle, Loader2, Printer, BarChart2, Table } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, onSnapshot, getDocFromServer, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, collection, getDocs, writeBatch, getDocFromServer, runTransaction } from 'firebase/firestore';
 import { KPIView } from './KPIView';
 import { SewOutReportModal } from './SewOutReportModal';
 import { PrintOrientationModal } from './PrintOrientationModal';
@@ -137,7 +137,6 @@ export interface ProductionOrder {
   cumCTNQty: number;
   statusText: string;
   deliveredQty: number;
-  cifOffering?: string;
   remark?: string;
   productionLine?: string;
 }
@@ -304,162 +303,6 @@ function RemarkInput({
   );
 }
 
-function CifOfferingInput({
-  initialValue,
-  updatedAt,
-  rowId,
-  onSave
-}: {
-  initialValue: string;
-  updatedAt: number | null;
-  rowId: string;
-  onSave: (id: string, text: string) => void;
-}) {
-  const [value, setValue] = useState(initialValue);
-  const [isLocked, setIsLocked] = useState(initialValue.trim() !== "");
-  const [showPrompt, setShowPrompt] = useState(false);
-  const [passcode, setPasscode] = useState("");
-  const [errorMsg, setErrorMsg] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    setValue(initialValue);
-    setIsLocked(initialValue.trim() !== "");
-  }, [initialValue]);
-
-  const getTooltipInfo = () => {
-    if (!updatedAt || !initialValue.trim()) return undefined;
-    const date = new Date(updatedAt);
-    
-    const formattedDate = date.toLocaleString('en-US', { 
-       year: 'numeric', month: '2-digit', day: '2-digit', 
-       hour: '2-digit', minute: '2-digit', hour12: true 
-    });
-
-    const day = date.getDay();
-    const hour = date.getHours(); 
-    
-    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-    const dayNum = d.getUTCDay() || 7;
-    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-
-    const morningShift = weekNo % 2 !== 0 ? 'A' : 'B';
-    const eveningShift = weekNo % 2 !== 0 ? 'B' : 'A';
-    
-    let currentShift = "Off-hours";
-    if (day !== 0) {
-       if (hour >= 6 && hour < 14) { 
-           currentShift = `Shift ${morningShift}`;
-       } else if (hour >= 14 && hour < 22) { 
-           currentShift = `Shift ${eveningShift}`;
-       }
-    } else {
-       currentShift = "Holiday (Sunday)";
-    }
-
-    return `Updated: ${formattedDate} | ${currentShift}`;
-  };
-
-  const handleDoubleClick = () => {
-    if (isLocked) {
-      setShowPrompt(true);
-      setPasscode("");
-      setErrorMsg("");
-    }
-  };
-
-  const handleUnlock = () => {
-    if (passcode === '1125') {
-      setIsLocked(false);
-      setShowPrompt(false);
-      setTimeout(() => {
-        if (inputRef.current) {
-          inputRef.current.focus();
-        }
-      }, 50);
-    } else {
-      setErrorMsg("Incorrect passcode!");
-    }
-  };
-
-  return (
-    <>
-      <input 
-        ref={inputRef}
-        type="text" 
-        value={value}
-        readOnly={isLocked}
-        onDoubleClick={handleDoubleClick}
-        onChange={(e) => !isLocked && setValue(e.target.value)}
-        onBlur={() => {
-          if (!isLocked) {
-            if (value !== initialValue) {
-              onSave(rowId, value);
-            }
-            if (value.trim() !== "") {
-              setIsLocked(true);
-            }
-          }
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.currentTarget.blur();
-          }
-        }}
-        title={getTooltipInfo()}
-        placeholder={isLocked ? "" : "Add CIF Offering..."}
-        list="cif-offering-suggestions"
-        className={`w-full text-sm bg-transparent border-0 border-b px-1 py-1 transition-colors ${
-          isLocked 
-            ? 'border-transparent cursor-pointer hover:bg-slate-100/50 focus:ring-0 focus:outline-none font-medium text-slate-800' 
-            : 'border-slate-300 hover:border-slate-300 focus:border-indigo-500 focus:ring-0'
-        }`}
-      />
-      
-      {showPrompt && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
-          <div className="bg-white p-5 rounded-xl shadow-xl w-full max-w-xs border border-slate-200">
-            <h3 className="text-base font-bold text-slate-900 mb-1">Unlock CIF Offering</h3>
-            <p className="text-xs text-slate-500 mb-4">Enter passcode to edit this CIF Offering.</p>
-            <input 
-              type="password" 
-              autoFocus
-              value={passcode}
-              onChange={(e) => {
-                setPasscode(e.target.value);
-                setErrorMsg("");
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleUnlock();
-                if (e.key === 'Escape') setShowPrompt(false);
-              }}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm mb-2"
-              placeholder="Enter passcode..."
-            />
-            {errorMsg && <p className="text-xs text-red-500 mb-2">{errorMsg}</p>}
-            <div className="flex justify-end gap-2 mt-4">
-              <button 
-                onClick={() => setShowPrompt(false)}
-                className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={handleUnlock}
-                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
-              >
-                Unlock
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
 function ProductionLineInput({
   initialValue,
   rowId,
@@ -515,55 +358,6 @@ function ProductionLineInput({
   );
 }
 
-function getRowCifOffering(
-  item: ProductionOrder, 
-  cifMap: Record<string, { text: string; updatedAt?: number | null }>,
-  normalizedMap?: Map<string, { text: string; updatedAt: number | null }>
-): { text: string; updatedAt: number | null } {
-  if (!cifMap || typeof cifMap !== 'object') return { text: '', updatedAt: null };
-
-  const formatCif = (r: { text: string; updatedAt?: number | null } | undefined): { text: string; updatedAt: number | null } | null => {
-    if (!r || !r.text || r.text.trim() === '') return null;
-    return { text: r.text.trim(), updatedAt: r.updatedAt ?? null };
-  };
-
-  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-  // 1. Direct match on row.id
-  let res = formatCif(cifMap[item.id]);
-  if (res) return res;
-
-  // 2. Direct match on row.legacyId
-  if (item.legacyId) {
-    res = formatCif(cifMap[item.legacyId]);
-    if (res) return res;
-  }
-
-  // 3. Raw combined keys
-  const rawStable = `${item.vpoNo}_${item.scheduleNo}_${item.styleNo}_${item.colorCode}_${item.destination}`;
-  res = formatCif(cifMap[rawStable]);
-  if (res) return res;
-
-  const rawLegacy = `${item.vpoNo}_${item.scheduleNo}_${item.styleNo}_${item.colorCode}_${item.destination}_${item.planDelDate}`;
-  res = formatCif(cifMap[rawLegacy]);
-  if (res) return res;
-
-  // 4. Normalized fuzzy search
-  const normStable = normalize(rawStable);
-  const normLegacy = normalize(rawLegacy);
-  
-  if (normalizedMap) {
-    const found = normalizedMap.get(normStable) || normalizedMap.get(normLegacy);
-    if (found) return found;
-  }
-
-  if (item.cifOffering) {
-    return { text: item.cifOffering, updatedAt: null };
-  }
-
-  return { text: '', updatedAt: null };
-}
-
 const TABLE_COLUMN_WIDTHS = [
   '120px', // Plan Del Date
   '110px', // PED
@@ -583,7 +377,6 @@ const TABLE_COLUMN_WIDTHS = [
   '115px', // Cum CTN Qty
   '115px', // Status
   '220px', // Remark
-  '200px', // CIF Offering
   '135px', // Production Lines
   '115px', // Delivered Qty
 ];
@@ -623,24 +416,20 @@ export function getSixWeeksWindow(): { start: Date; end: Date; weekNumbers: Set<
 function parseExcelDate(val: any): Date | null {
   if (val == null || val === '') return null;
   if (val instanceof Date && !isNaN(val.getTime())) return val;
-  
-  // Handle numeric Excel date serials (e.g. 45604 or "45604")
-  const numVal = Number(val);
-  if (!isNaN(numVal) && numVal > 30000 && numVal < 60000) {
-    return new Date(Math.round((numVal - 25569) * 86400 * 1000));
+  if (typeof val === 'number') {
+    if (val > 30000 && val < 60000) {
+      return new Date(Math.round((val - 25569) * 86400 * 1000));
+    }
   }
-
   const str = String(val).trim();
-  if (!str) return null;
-
   if (/^\d{8}$/.test(str)) {
     const y = parseInt(str.substring(0, 4), 10);
     const m = parseInt(str.substring(4, 6), 10) - 1;
     const d = parseInt(str.substring(6, 8), 10);
     return new Date(y, m, d);
   }
-  if (/^\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}$/.test(str)) {
-    const parts = str.split(/[\/\-\.]/);
+  if (/^\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}$/.test(str)) {
+    const parts = str.split(/[\/\-]/);
     return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
   }
   if (/^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}$/.test(str)) {
@@ -672,15 +461,15 @@ function isDateWithinSixWeeks(d: Date | null, weekNo: string, window: { start: D
 function getVal(row: any, searchKeys: string[]): any {
   if (!row || typeof row !== 'object') return undefined;
   for (const k of searchKeys) {
-    if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+    if (row[k] !== undefined && row[k] !== null && row[k] !== '') {
       return row[k];
     }
   }
-  const normKeys = searchKeys.map(k => k.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const normKeys = searchKeys.map(k => k.toLowerCase().replace(/\s+/g, ''));
   for (const key of Object.keys(row)) {
-    const normKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normKey = key.toLowerCase().replace(/\s+/g, '');
     if (normKeys.includes(normKey)) {
-      if (row[key] !== undefined && row[key] !== null && String(row[key]).trim() !== '') {
+      if (row[key] !== undefined && row[key] !== null && row[key] !== '') {
         return row[key];
       }
     }
@@ -797,193 +586,13 @@ function getRowProductionLine(
   return { text: '', updatedAt: null };
 }
 
-function isFirestoreQuotaError(msg: string): boolean {
-  return /quota exceeded|resource-exhausted|free daily read units/i.test(msg);
-}
-
-async function compressOrdersToBase64(orders: ProductionOrder[]): Promise<string | null> {
-  if (typeof CompressionStream === 'undefined') return null;
-  try {
-    const tuples = orders.map(item => [
-      item.id || '', item.legacyId || '', item.buyer || '', item.groupTechClass || '', item.buyerDivisionName || '',
-      item.styleNo || '', item.custStyleNo || '', item.vpoNo || '', item.shipmentMode || '', item.colorCode || '',
-      item.colorName || '', item.destination || '', item.packMethod || '', item.scheduleNo || '', item.planDelDate || '',
-      item.ped || '', item.weekNo || '', Number(item.coQty) || 0, Number(item.cumSewInQty) || 0, Number(item.cumSewOutQty) || 0,
-      Number(item.cumSewOutRejQty) || 0, Number(item.cumCTNQty) || 0, item.statusText || '', Number(item.deliveredQty) || 0,
-      item.cifOffering || '', item.remark || ''
-    ]);
-    const jsonBytes = new TextEncoder().encode(JSON.stringify(tuples));
-    const stream = new Blob([jsonBytes]).stream().pipeThrough(new CompressionStream('gzip'));
-    const compressedBuf = await new Response(stream).arrayBuffer();
-    const bytes = new Uint8Array(compressedBuf);
-    let binary = '';
-    const CHUNK = 0x4000;
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-    }
-    return btoa(binary);
-  } catch (e) {
-    console.warn('Gzip compression fallback:', e);
-    return null;
-  }
-}
-
-async function decompressOrdersFromBase64(base64: string): Promise<ProductionOrder[]> {
-  if (typeof DecompressionStream === 'undefined') {
-    throw new Error('Browser does not support DecompressionStream');
-  }
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-  const decompressedText = await new Response(stream).text();
-  const parsed = JSON.parse(decompressedText);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.map((row: any) => {
-    if (!Array.isArray(row)) return row as ProductionOrder;
-    return {
-      id: String(row[0] ?? ''),
-      legacyId: String(row[1] ?? ''),
-      buyer: String(row[2] ?? ''),
-      groupTechClass: String(row[3] ?? ''),
-      buyerDivisionName: String(row[4] ?? ''),
-      styleNo: String(row[5] ?? ''),
-      custStyleNo: String(row[6] ?? ''),
-      vpoNo: String(row[7] ?? ''),
-      shipmentMode: String(row[8] ?? ''),
-      colorCode: String(row[9] ?? ''),
-      colorName: String(row[10] ?? ''),
-      destination: String(row[11] ?? ''),
-      packMethod: String(row[12] ?? ''),
-      scheduleNo: String(row[13] ?? ''),
-      planDelDate: String(row[14] ?? ''),
-      ped: String(row[15] ?? ''),
-      weekNo: String(row[16] ?? ''),
-      coQty: Number(row[17]) || 0,
-      cumSewInQty: Number(row[18]) || 0,
-      cumSewOutQty: Number(row[19]) || 0,
-      cumSewOutRejQty: Number(row[20]) || 0,
-      cumCTNQty: Number(row[21]) || 0,
-      statusText: String(row[22] ?? ''),
-      deliveredQty: Number(row[23]) || 0,
-      cifOffering: String(row[24] ?? ''),
-      remark: String(row[25] ?? ''),
-    };
-  });
-}
-
 export function Dashboard() {
-  const [data, setData] = useState<ProductionOrder[] | null>(() => {
-    try {
-      const dataKeys = ['production_dashboard_data', 'production_data', 'dashboard_data', 'orders_data', 'excel_data'];
-      for (const k of dataKeys) {
-        const val = localStorage.getItem(k);
-        if (val) {
-          const parsed = JSON.parse(val);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-        }
-      }
-    } catch (e) {}
-    return null;
-  });
-
-  const [lastUpdated, setLastUpdated] = useState<number | null>(() => {
-    try {
-      const val = localStorage.getItem('production_dashboard_last_updated');
-      if (val) return Number(val);
-    } catch (e) {}
-    return null;
-  });
-
-  const lastUpdatedRef = useRef<number>(lastUpdated || 0);
-  const dataRef = useRef<ProductionOrder[] | null>(data);
-  useEffect(() => {
-    dataRef.current = data;
-  }, [data]);
-
-  const appliedCloudUploadIdRef = useRef<string | null>((() => {
-    try {
-      if (data && data.length > 0) {
-        return localStorage.getItem('production_dashboard_upload_id');
-      }
-    } catch (e) {}
-    return null;
-  })());
-
+  const [data, setData] = useState<ProductionOrder[] | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [loadingState, setLoadingState] = useState<'idle' | 'reading' | 'parsing' | 'uploading'>('idle');
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
-  const [syncStatus, setSyncStatus] = useState<'connecting' | 'synced' | 'syncing' | 'error'>('connecting');
-  const [syncError, setSyncError] = useState<string | null>(null);
-  const [listenerNonce, setListenerNonce] = useState(0);
-  const retryAttemptRef = useRef(0);
-
-  const [remarks, setRemarks] = useState<Record<string, { text: string, updatedAt: number | null }>>(() => {
-    try {
-      const val = localStorage.getItem('production_dashboard_remarks');
-      if (val) return JSON.parse(val);
-    } catch (e) {}
-    return {};
-  });
-
-  const [productionLines, setProductionLines] = useState<Record<string, { text: string, updatedAt: number | null }>>(() => {
-    try {
-      const val = localStorage.getItem('production_dashboard_production_lines');
-      if (val) return JSON.parse(val);
-    } catch (e) {}
-    return {};
-  });
-
-  const [cifOfferings, setCifOfferings] = useState<Record<string, { text: string, updatedAt: number | null }>>(() => {
-    try {
-      const val = localStorage.getItem('production_dashboard_cif_offerings');
-      if (val) return JSON.parse(val);
-    } catch (e) {}
-    return {};
-  });
-
-  const saveLocalDashboardCache = useCallback((orders: ProductionOrder[], timestamp: number, uploadId?: string | null) => {
-    try {
-      // Remove legacy duplicate keys to prevent hitting browser 5MB localStorage quota
-      ['production_data', 'dashboard_data', 'orders_data', 'excel_data'].forEach(k => {
-        try { localStorage.removeItem(k); } catch {}
-      });
-      localStorage.setItem('production_dashboard_data', JSON.stringify(orders));
-      localStorage.setItem('production_dashboard_last_updated', String(timestamp));
-      if (uploadId) {
-        localStorage.setItem('production_dashboard_upload_id', uploadId);
-      }
-    } catch (e) {
-      console.warn('Local cache save warning:', e);
-    }
-  }, []);
-
-  const updateDashboardData = useCallback((
-    newOrders: ProductionOrder[],
-    timestamp: number,
-    source: 'firestore_v3' | 'upload' | 'manual_sync' | 'server_api' | 'sse_init' | 'sse_dashboard',
-    uploadId?: string | null
-  ) => {
-    if (!newOrders || !Array.isArray(newOrders) || newOrders.length === 0) return;
-
-    const isAuthoritative = source === 'firestore_v3' || source === 'upload' || source === 'manual_sync';
-    const isLiveSsePush = source === 'sse_dashboard' && Boolean(uploadId) && uploadId !== appliedCloudUploadIdRef.current;
-    const hasNoData = !dataRef.current || dataRef.current.length === 0;
-    const isNewerTimestamp = timestamp > lastUpdatedRef.current;
-
-    if (isAuthoritative || isLiveSsePush || hasNoData || (isNewerTimestamp && (!uploadId || uploadId !== appliedCloudUploadIdRef.current))) {
-      lastUpdatedRef.current = timestamp;
-      if (uploadId) {
-        appliedCloudUploadIdRef.current = uploadId;
-      }
-      dataRef.current = newOrders;
-      setLastUpdated(timestamp);
-      setData(newOrders);
-      saveLocalDashboardCache(newOrders, timestamp, uploadId);
-    }
-  }, [saveLocalDashboardCache]);
+  const [remarks, setRemarks] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
+  const [productionLines, setProductionLines] = useState<Record<string, { text: string, updatedAt: number | null }>>({});
   
   // Pre-calculate normalized remarks map for fast fuzzy matching
   const normalizedRemarksMap = useMemo(() => {
@@ -1006,28 +615,11 @@ export function Dashboard() {
     return map;
   }, [remarks]);
 
-  const normalizedCifOfferingsMap = useMemo(() => {
-    const map = new Map<string, { text: string; updatedAt: number | null }>();
-    const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-    
-    Object.entries(cifOfferings).forEach(([id, data]) => {
-      const cifData = data as { text: string; updatedAt: number | null };
-      if (cifData.text && cifData.text.trim() !== '') {
-        const normKey = normalize(id);
-        if (normKey) {
-          const existing = map.get(normKey);
-          if (!existing || (cifData.updatedAt || 0) > (existing.updatedAt || 0)) {
-            map.set(normKey, { text: cifData.text.trim(), updatedAt: cifData.updatedAt || null });
-          }
-        }
-      }
-    });
-    return map;
-  }, [cifOfferings]);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'table' | 'kpi'>('table');
+  const lastUpdatedRef = useRef<number | null>(null);
 
   // Filters State
   const [searchTerm, setSearchTerm] = useState('');
@@ -1037,7 +629,6 @@ export function Dashboard() {
   const [filterShipmentMode, setFilterShipmentMode] = useState<string[]>([]);
   const [filterDestination, setFilterDestination] = useState<string[]>([]);
   const [filterPackMethod, setFilterPackMethod] = useState<string[]>([]);
-  const [filterCifOffering, setFilterCifOffering] = useState<string[]>([]);
   const [filterRemark, setFilterRemark] = useState<string[]>([]);
   const [filterPED, setFilterPED] = useState<string[]>([]);
   const [filterProductionLine, setFilterProductionLine] = useState<string[]>([]);
@@ -1051,279 +642,196 @@ export function Dashboard() {
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null);
   const [isRecovering, setIsRecovering] = useState(false);
 
-  // Helper to apply a dashboard_v3/main snapshot and fetch all chunk parts reliably
-  const applyDashboardSnapshot = useCallback(async (mainData: any, forceServerParts = false) => {
-    if (!mainData) return;
-
-    const cloudUploadId = String(mainData.uploadId || mainData.lastUpdated || '');
-    const expectedTotal = typeof mainData.totalCount === 'number' ? mainData.totalCount : null;
-
-    // Skip redundant part reads if this exact cloud upload is already loaded cleanly in memory
-    if (
-      !forceServerParts &&
-      dataRef.current &&
-      dataRef.current.length > 0 &&
-      cloudUploadId &&
-      appliedCloudUploadIdRef.current === cloudUploadId &&
-      (expectedTotal === null || dataRef.current.length === expectedTotal)
-    ) {
-      if (mainData.lastUpdated && mainData.lastUpdated !== lastUpdatedRef.current) {
-        lastUpdatedRef.current = mainData.lastUpdated;
-        setLastUpdated(mainData.lastUpdated);
-      }
-      setSyncStatus('synced');
-      setSyncError(null);
-      return;
-    }
-
-    let allOrders: ProductionOrder[] = [];
-
-    if (typeof mainData.compressedGzip === 'string' && mainData.compressedGzip.length > 0) {
-      allOrders = await decompressOrdersFromBase64(mainData.compressedGzip);
-    } else {
-      allOrders = Array.isArray(mainData.orders) ? [...mainData.orders] : [];
-      const chunkCount = mainData.chunkCount || 1;
-
-      if (chunkCount > 1) {
-        setSyncStatus('syncing');
-        const fetchPart = async (index: number, attempt = 0): Promise<ProductionOrder[]> => {
-          const partRef = doc(db, 'dashboard_v3', `part_${index}`);
-          let partSnap;
-          try {
-            partSnap = (forceServerParts || attempt > 0)
-              ? await getDocFromServer(partRef)
-              : await getDoc(partRef);
-          } catch {
-            partSnap = await getDoc(partRef);
-          }
-
-          if (!partSnap.exists()) {
-            if (attempt < 2) {
-              await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-              return fetchPart(index, attempt + 1);
-            }
-            throw new Error(`Missing orderbook chunk part_${index}`);
-          }
-
-          const partData = partSnap.data();
-          if (mainData.uploadId && partData?.uploadId && partData.uploadId !== mainData.uploadId && attempt < 2) {
-            await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-            return fetchPart(index, attempt + 1);
-          }
-
-          return Array.isArray(partData?.orders) ? partData.orders : [];
-        };
-
-        const partIndices = Array.from({ length: chunkCount - 1 }, (_, idx) => idx + 1);
-        const partResults = await Promise.all(partIndices.map(i => fetchPart(i)));
-        for (const chunkOrders of partResults) {
-          allOrders = allOrders.concat(chunkOrders);
+  // 1. Initial validation & setup
+  useEffect(() => {
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, 'dashboardData', 'main'));
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('Quota exceeded')) {
+          setError("Firestore free tier quota exceeded. It will reset in 24 hours.");
         }
       }
     }
-
-    if (allOrders.length > 0) {
-      const ts = mainData.lastUpdated || Date.now();
-      updateDashboardData(
-        allOrders,
-        ts,
-        forceServerParts ? 'manual_sync' : 'firestore_v3',
-        cloudUploadId || String(ts)
-      );
-      setSyncStatus('synced');
-      setSyncError(null);
-    }
-  }, [updateDashboardData]);
-
-  const handleManualCloudSync = useCallback(async () => {
-    setSyncStatus('syncing');
-    setSyncError(null);
-    try {
-      const mainSnap = await getDocFromServer(doc(db, 'dashboard_v3', 'main'));
-      if (mainSnap.exists()) {
-        await applyDashboardSnapshot(mainSnap.data(), true);
-      } else {
-        setSyncStatus('synced');
-      }
-    } catch (err: any) {
-      const msg = err?.message || 'Unable to reach cloud sync server';
-      setSyncStatus('error');
-      setSyncError(isFirestoreQuotaError(msg) ? 'Firestore free daily read quota exceeded. It resets in 24h (or upgrade to Blaze).' : msg);
-    }
-  }, [applyDashboardSnapshot]);
-
-  // 1. Re-connect automatically when network comes back online
-  useEffect(() => {
-    const handleOnline = () => {
-      retryAttemptRef.current = 0;
-      setListenerNonce(n => n + 1);
-    };
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
+    testConnection();
   }, []);
 
-  // 2. Real-time Sync from Firestore (Single-Doc Compressed Low-Read Mode for Dashboard, Remarks, Lines, and CIF)
+  // 2. Real-time Sync from Firestore
   useEffect(() => {
     let isMounted = true;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    setSyncStatus('connecting');
 
-    // A. Dashboard Data Sync (v3 main document)
-    const unsubDashboardV3 = onSnapshot(doc(db, 'dashboard_v3', 'main'), async (snap) => {
+    // Listen to the entire dashboardData collection for chunked data
+    const unsubDashboard = onSnapshot(collection(db, 'dashboardData'), (snap) => {
       if (!isMounted) return;
-      retryAttemptRef.current = 0;
-      if (!snap.exists()) {
-        setSyncStatus('synced');
-        return;
-      }
-      // Wait for server confirmation if this is only our own local pending write
-      if (snap.metadata.hasPendingWrites) return;
+      
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const meta = docs.find(d => d.id === 'meta') as any;
+      const main = docs.find(d => d.id === 'main') as any;
+      
+      if (main && main.orders && Array.isArray(main.orders)) {
+        // Legacy support: data still in 'main'
+        setData(main.orders);
+        setLastUpdated(main.lastUpdated || null);
+      } else if (meta && meta.orders && Array.isArray(meta.orders)) {
+        // Support for non-chunked meta doc
+        setData(meta.orders);
+        setLastUpdated(meta.lastUpdated || null);
+      } else if (meta && meta.chunkCount !== undefined) {
+        // Chunked data support
+        const chunks = docs.filter(d => d.id.startsWith('chunk_')).sort((a, b) => {
+          const idxA = parseInt(a.id.split('_')[1]);
+          const idxB = parseInt(b.id.split('_')[1]);
+          return idxA - idxB;
+        });
 
-      const mainData = snap.data();
-      if (!mainData) return;
-
-      try {
-        await applyDashboardSnapshot(mainData, false);
-      } catch (err: any) {
-        if (!isMounted) return;
-        const msg = err?.message || String(err);
-        console.warn('Dashboard V3 chunk load error:', msg);
-        setSyncStatus('error');
-        setSyncError(isFirestoreQuotaError(msg) ? 'Firestore free daily read quota exceeded. Resets in 24h.' : `Cloud sync error: ${msg}`);
-      }
-    }, (err: any) => {
-      if (!isMounted) return;
-      const msg = err?.message || String(err);
-      console.warn('Dashboard V3 sync error:', msg);
-      setSyncStatus('error');
-      if (isFirestoreQuotaError(msg)) {
-        const quotaMsg = 'Firestore free tier daily quota exceeded. Resets in 24h — upgrade Firebase Blaze or wait for daily reset.';
-        setSyncError(quotaMsg);
-        setError(quotaMsg);
-      } else {
-        setSyncError('Cloud listener disconnected. Reconnecting...');
-        // Exponential backoff (30s, 60s, 120s, max 300s) to avoid burning read quota on flaky networks
-        const delayMs = Math.min(300000, 30000 * Math.pow(2, retryAttemptRef.current));
-        retryAttemptRef.current += 1;
-        retryTimer = setTimeout(() => {
-          if (isMounted && !document.hidden) {
-            setListenerNonce(n => n + 1);
+        if (chunks.length >= meta.chunkCount && meta.chunkCount > 0) {
+          const allOrders = chunks.flatMap((c: any) => c.orders || []);
+          // Only update if we have meaningful data
+          if (allOrders.length > 0) {
+            setData(allOrders);
+            setLastUpdated(meta.lastUpdated || null);
+            try {
+              localStorage.setItem('production_dashboard_data', JSON.stringify(allOrders));
+            } catch (e) {}
           }
-        }, delayMs);
+        }
+      }
+    }, (err) => {
+      console.error('Dashboard sync error:', err);
+      if (err.message.includes('Quota exceeded')) {
+        setError("Firestore quota exceeded. Data may not sync in real-time.");
+      } else {
+        setError(`Sync Error: ${err.message}`);
       }
     });
 
-    // B. Remarks Sync (remarks_v2/all)
+    // Optimized Remarks Sync
     const unsubRemarks = onSnapshot(doc(db, 'remarks_v2', 'all'), (snap) => {
       if (snap.exists() && isMounted) {
         const newRemarks = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
         setRemarks(prev => {
           const merged = { ...prev };
-          let changed = false;
           Object.entries(newRemarks).forEach(([id, data]) => {
-            if (data && typeof data === 'object') {
-              const prevUpdated = merged[id]?.updatedAt || 0;
-              const newUpdated = data.updatedAt || 0;
-              if (!merged[id] || newUpdated >= prevUpdated) {
-                if (merged[id]?.text !== data.text || merged[id]?.updatedAt !== data.updatedAt) {
-                  merged[id] = data;
-                  changed = true;
-                }
-              }
+            // Only update if the new remark is non-empty, OR if we don't have it yet
+            if (data.text && data.text.trim() !== '') {
+              merged[id] = data;
+            } else if (!merged[id]) {
+              merged[id] = data;
             }
           });
-          if (changed) {
-            try {
-              localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
-            } catch (e) {}
-            return merged;
-          }
-          return prev;
+          try {
+            localStorage.setItem('production_dashboard_remarks', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
         });
       }
     }, (err) => {
       console.warn('Remarks sync error:', err);
     });
 
-    // C. Production Lines Sync (production_lines_v2/all)
+    // Optimized Production Lines Sync
     const unsubProductionLines = onSnapshot(doc(db, 'production_lines_v2', 'all'), (snap) => {
       if (snap.exists() && isMounted) {
         const newLines = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
         setProductionLines(prev => {
           const merged = { ...prev };
-          let changed = false;
           Object.entries(newLines).forEach(([id, data]) => {
-            if (data && typeof data === 'object') {
-              const prevUpdated = merged[id]?.updatedAt || 0;
-              const newUpdated = data.updatedAt || 0;
-              if (!merged[id] || newUpdated >= prevUpdated) {
-                if (merged[id]?.text !== data.text || merged[id]?.updatedAt !== data.updatedAt) {
-                  merged[id] = data;
-                  changed = true;
-                }
-              }
+            if (data.text && data.text.trim() !== '') {
+              merged[id] = data;
+            } else if (!merged[id]) {
+              merged[id] = data;
             }
           });
-          if (changed) {
-            try {
-              localStorage.setItem('production_dashboard_production_lines', JSON.stringify(merged));
-            } catch (e) {}
-            return merged;
-          }
-          return prev;
+          try {
+            localStorage.setItem('production_dashboard_production_lines', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
         });
       }
     }, (err) => {
       console.warn('Production lines sync error:', err);
     });
 
-    // D. CIF Offerings Sync (cif_offerings_v2/all)
-    const unsubCifOfferings = onSnapshot(doc(db, 'cif_offerings_v2', 'all'), (snap) => {
-      if (snap.exists() && isMounted) {
-        const newCif = snap.data() as Record<string, { text: string, updatedAt: number | null }>;
-        setCifOfferings(prev => {
-          const merged = { ...prev };
-          let changed = false;
-          Object.entries(newCif).forEach(([id, data]) => {
-            if (data && typeof data === 'object') {
-              const prevUpdated = merged[id]?.updatedAt || 0;
-              const newUpdated = data.updatedAt || 0;
-              if (!merged[id] || newUpdated >= prevUpdated) {
-                if (merged[id]?.text !== data.text || merged[id]?.updatedAt !== data.updatedAt) {
-                  merged[id] = data;
-                  changed = true;
-                }
-              }
+    // Recovery logic: Fetch from legacy 'remarks' collection if remarks are missing
+    const recoverLegacyRemarks = async () => {
+      try {
+        // Check if we've already done migration this session to avoid redundant heavy calls
+        const alreadyMigrated = sessionStorage.getItem('migration_done');
+        if (alreadyMigrated) return;
+
+        const legacySnap = await getDocs(collection(db, 'remarks'));
+        if (!legacySnap.empty && isMounted) {
+          console.log(`[Migration] Found ${legacySnap.size} legacy remarks. Checking for recovery...`);
+          const legacyData: Record<string, { text: string; updatedAt: number | null }> = {};
+          legacySnap.forEach(doc => {
+            const d = doc.data();
+            if (d.text && d.text.trim() !== '') {
+              legacyData[doc.id] = { text: d.text.trim(), updatedAt: d.updatedAt || null };
             }
           });
-          if (changed) {
-            try {
-              localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
-            } catch (e) {}
-            return merged;
+          
+          if (Object.keys(legacyData).length > 0) {
+            setRemarks(prev => {
+              const merged = { ...prev };
+              let restoredCount = 0;
+              Object.entries(legacyData).forEach(([id, data]) => {
+                if (!merged[id] || !merged[id].text || merged[id].text.trim() === '') {
+                  merged[id] = data;
+                  restoredCount++;
+                }
+              });
+              if (restoredCount > 0) {
+                console.log(`[Migration] Restored ${restoredCount} remarks from legacy collection.`);
+              }
+              return merged;
+            });
+
+            // Migration to remarks_v2/all (optimized single doc)
+            const remarksRef = doc(db, 'remarks_v2', 'all');
+            const currentSnap = await getDoc(remarksRef);
+            const currentData = currentSnap.exists() ? currentSnap.data() as Record<string, any> : {};
+            
+            const toUpdate: Record<string, any> = {};
+            let hasNew = false;
+            Object.entries(legacyData).forEach(([id, data]) => {
+              if (!currentData[id] || !currentData[id].text || currentData[id].text.trim() === '') {
+                toUpdate[id] = data;
+                hasNew = true;
+              }
+            });
+
+            if (hasNew) {
+              // Batch the update if it's too large for a single doc (Firestore doc limit is 1MB)
+              // 300 remarks is fine, but 5000 might not be.
+              const keys = Object.keys(toUpdate);
+              for (let i = 0; i < keys.length; i += 200) {
+                const chunk: Record<string, any> = {};
+                keys.slice(i, i + 200).forEach(k => chunk[k] = toUpdate[k]);
+                await setDoc(remarksRef, chunk, { merge: true });
+              }
+            }
+            sessionStorage.setItem('migration_done', 'true');
           }
-          return prev;
-        });
+        }
+      } catch (err) {
+        console.warn('Legacy remarks recovery failed:', err);
       }
-    }, (err) => {
-      console.warn('CIF offerings sync error:', err);
-    });
+    };
+    recoverLegacyRemarks();
 
     return () => {
       isMounted = false;
-      if (retryTimer) clearTimeout(retryTimer);
-      unsubDashboardV3();
+      unsubDashboard();
       unsubRemarks();
       unsubProductionLines();
-      unsubCifOfferings();
     };
-  }, [applyDashboardSnapshot, listenerNonce]);
+  }, []);
 
   // 3. Multi-PC Real-Time Sync & Server Backup Integration (SSE + /api/remarks + /api/dashboard)
   useEffect(() => {
     let isMounted = true;
 
-    // Load remarks immediately from server backup
+    // Load remarks immediately from server backup (contains all 968+ remarks across weeks 41-48)
     fetch('/api/remarks')
       .then(res => safeJson(res))
       .then((serverRemarks: Record<string, { text: string; updatedAt: number | null }> | null) => {
@@ -1336,6 +844,14 @@ export function Dashboard() {
             } catch (e) {}
             return merged;
           });
+
+          // Ensure Firestore remarks_v2/all is also primed with any missing remarks
+          const remarksRef = doc(db, 'remarks_v2', 'all');
+          getDoc(remarksRef).then(snap => {
+            if (!snap.exists() || Object.keys(snap.data() || {}).length < Object.keys(serverRemarks).length) {
+              setDoc(remarksRef, serverRemarks, { merge: true }).catch(() => {});
+            }
+          }).catch(() => {});
         }
       })
       .catch(() => {});
@@ -1353,39 +869,32 @@ export function Dashboard() {
             } catch (e) {}
             return merged;
           });
+
+          const linesRef = doc(db, 'production_lines_v2', 'all');
+          getDoc(linesRef).then(snap => {
+            if (!snap.exists() || Object.keys(snap.data() || {}).length < Object.keys(serverLines).length) {
+              setDoc(linesRef, serverLines, { merge: true }).catch(() => {});
+            }
+          }).catch(() => {});
         }
       })
       .catch(() => {});
 
-    // Load CIF offerings immediately from server backup
-    fetch('/api/cif-offerings')
-      .then(res => safeJson(res))
-      .then((serverCif: Record<string, { text: string; updatedAt: number | null }> | null) => {
-        if (!isMounted || !serverCif || typeof serverCif !== 'object') return;
-        if (Object.keys(serverCif).length > 0) {
-          setCifOfferings(prev => {
-            const merged = { ...serverCif, ...prev };
-            try {
-              localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
-            } catch (e) {}
-            return merged;
-          });
-        }
-      })
-      .catch(() => {});
-
-    // Load dashboard order items from server backup ONLY if newer or no data loaded yet
+    // Load dashboard order items if client has not received them yet
     fetch('/api/dashboard')
       .then(res => safeJson(res))
       .then(serverDashboard => {
         if (!isMounted || !serverDashboard?.data || !Array.isArray(serverDashboard.data)) return;
-        if (serverDashboard.data.length > 0 && serverDashboard.lastUpdated) {
-          updateDashboardData(serverDashboard.data, serverDashboard.lastUpdated, 'server_api', serverDashboard.uploadId);
+        if (serverDashboard.data.length > 0) {
+          setData(prev => (prev && prev.length > 0 ? prev : serverDashboard.data));
+          if (serverDashboard.lastUpdated) {
+            setLastUpdated(prev => prev || serverDashboard.lastUpdated);
+          }
         }
       })
       .catch(() => {});
 
-    // Connect to Server-Sent Events (SSE) for instant same-server updates
+    // Connect to Server-Sent Events (SSE) for instant cross-device updates
     let eventSource: EventSource | null = null;
     try {
       eventSource = new EventSource('/api/realtime');
@@ -1400,11 +909,8 @@ export function Dashboard() {
             if (payload.productionLines && typeof payload.productionLines === 'object') {
               setProductionLines(prev => ({ ...payload.productionLines, ...prev }));
             }
-            if (payload.cifOfferings && typeof payload.cifOfferings === 'object') {
-              setCifOfferings(prev => ({ ...payload.cifOfferings, ...prev }));
-            }
-            if (payload.dashboard?.data && Array.isArray(payload.dashboard.data) && payload.dashboard.data.length > 0 && payload.dashboard.lastUpdated) {
-              updateDashboardData(payload.dashboard.data, payload.dashboard.lastUpdated, 'sse_init', payload.dashboard.uploadId);
+            if (payload.dashboard?.data && Array.isArray(payload.dashboard.data)) {
+              setData(prev => (prev && prev.length > 0 ? prev : payload.dashboard.data));
             }
           } else if (payload.type === 'remark' && payload.id) {
             setRemarks(prev => {
@@ -1438,34 +944,76 @@ export function Dashboard() {
               } catch (e) {}
               return merged;
             });
-          } else if (payload.type === 'cif_offering' && payload.id) {
-            setCifOfferings(prev => {
-              const next = { ...prev, [payload.id]: { text: payload.text, updatedAt: payload.updatedAt } };
-              try {
-                localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(next));
-              } catch (e) {}
-              return next;
-            });
-          } else if (payload.type === 'cif_offerings_batch' && payload.cifOfferings) {
-            setCifOfferings(prev => {
-              const merged = { ...prev, ...payload.cifOfferings };
-              try {
-                localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
-              } catch (e) {}
-              return merged;
-            });
-          } else if (payload.type === 'dashboard' && payload.data && Array.isArray(payload.data) && payload.lastUpdated) {
-            updateDashboardData(payload.data, payload.lastUpdated, 'sse_dashboard', payload.uploadId);
+          } else if (payload.type === 'dashboard' && payload.data) {
+            setData(payload.data);
+            if (payload.lastUpdated) setLastUpdated(payload.lastUpdated);
           }
         } catch (e) {}
       };
+    } catch (e) {}
+
+    // Auto-recover from localStorage (offline fallback)
+    try {
+      const dataKeys = ['production_dashboard_data', 'production_data', 'dashboard_data', 'orders_data', 'excel_data'];
+      const remarkKeys = ['production_dashboard_remarks', 'remarks', 'app_remarks'];
+      const lineKeys = ['production_dashboard_production_lines', 'production_lines', 'app_production_lines'];
+
+      let recoveredData: ProductionOrder[] | null = null;
+      for (const k of dataKeys) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          try {
+            const p = JSON.parse(val);
+            if (Array.isArray(p) && p.length > 0) {
+              recoveredData = p;
+              break;
+            }
+          } catch (e) {}
+        }
+      }
+
+      let recoveredRemarks: Record<string, { text: string; updatedAt: number | null }> = {};
+      for (const k of remarkKeys) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          try {
+            const p = JSON.parse(val);
+            if (p && typeof p === 'object') {
+              recoveredRemarks = { ...recoveredRemarks, ...p };
+            }
+          } catch (e) {}
+        }
+      }
+
+      let recoveredLines: Record<string, { text: string; updatedAt: number | null }> = {};
+      for (const k of lineKeys) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          try {
+            const p = JSON.parse(val);
+            if (p && typeof p === 'object') {
+              recoveredLines = { ...recoveredLines, ...p };
+            }
+          } catch (e) {}
+        }
+      }
+
+      if (recoveredData) {
+        setData(prev => (prev && prev.length > 0 ? prev : recoveredData));
+      }
+      if (Object.keys(recoveredRemarks).length > 0) {
+        setRemarks(prev => ({ ...recoveredRemarks, ...prev }));
+      }
+      if (Object.keys(recoveredLines).length > 0) {
+        setProductionLines(prev => ({ ...recoveredLines, ...prev }));
+      }
     } catch (e) {}
 
     return () => {
       isMounted = false;
       eventSource?.close();
     };
-  }, [updateDashboardData]);
+  }, []);
 
   const handleRemarkChange = async (id: string, text: string) => {
     const updated = Date.now();
@@ -1480,42 +1028,27 @@ export function Dashboard() {
       return next;
     });
 
-    // 2. Persist to Firestore (Primary) - Direct setDoc with merge for maximum reliability & instant cross-PC sync
+    // 2. Persist to Firestore (Primary) using Transaction to single document
     try {
       const remarksRef = doc(db, 'remarks_v2', 'all');
-      await setDoc(remarksRef, { [id]: remarkData }, { merge: true });
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(remarksRef);
+        if (!snap.exists()) {
+          transaction.set(remarksRef, { [id]: remarkData });
+        } else {
+          transaction.update(remarksRef, { [id]: remarkData });
+        }
+      });
     } catch (err) {
-      console.warn('Firestore Save Notice for remark:', err);
-    }
-
-    // 3. Sync to Express Server API for redundancy & local SSE broadcast
-    fetch('/api/remarks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, text, updatedAt: updated })
-    }).catch(() => {});
-  };
-
-  const handleCifOfferingChange = async (id: string, text: string) => {
-    const updated = Date.now();
-    const cifData = { text, updatedAt: updated };
-    
-    setCifOfferings(prev => {
-      const next = { ...prev, [id]: cifData };
+      console.warn('Firestore Transaction Failed, attempting fallback:', err);
+      // Last-ditch effort if transaction fails
       try {
-        localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(next));
+        await setDoc(doc(db, 'remarks', id), remarkData);
       } catch (e) {}
-      return next;
-    });
-
-    try {
-      const cifRef = doc(db, 'cif_offerings_v2', 'all');
-      await setDoc(cifRef, { [id]: cifData }, { merge: true });
-    } catch (err) {
-      console.warn('Firestore Save Notice for CIF offering:', err);
     }
 
-    fetch('/api/cif-offerings', {
+    // 3. Optional: Sync to Server API for redundancy
+    fetch('/api/remarks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, text, updatedAt: updated })
@@ -1536,9 +1069,19 @@ export function Dashboard() {
 
     try {
       const linesRef = doc(db, 'production_lines_v2', 'all');
-      await setDoc(linesRef, { [id]: lineData }, { merge: true });
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(linesRef);
+        if (!snap.exists()) {
+          transaction.set(linesRef, { [id]: lineData });
+        } else {
+          transaction.update(linesRef, { [id]: lineData });
+        }
+      });
     } catch (err) {
-      console.warn('Firestore Save Notice for production line:', err);
+      console.warn('Firestore Transaction Failed for production line:', err);
+      try {
+        await setDoc(doc(db, 'production_lines', id), lineData);
+      } catch (e) {}
     }
 
     fetch('/api/production-lines', {
@@ -1550,122 +1093,63 @@ export function Dashboard() {
 
   const persistDashboardData = async (parsedData: ProductionOrder[]) => {
     setLoadingState('uploading');
-    setSyncStatus('syncing');
-    setSyncError(null);
     setUploadProgress({ current: 0, total: parsedData.length });
 
-    // Sanitize all order fields to ensure valid Firestore types (no undefined/NaN)
-    const cleanedData: ProductionOrder[] = parsedData.map(item => ({
-      id: String(item.id || ''),
-      legacyId: String(item.legacyId || ''),
-      buyer: String(item.buyer || ''),
-      groupTechClass: String(item.groupTechClass || ''),
-      buyerDivisionName: String(item.buyerDivisionName || ''),
-      styleNo: String(item.styleNo || ''),
-      custStyleNo: String(item.custStyleNo || ''),
-      vpoNo: String(item.vpoNo || ''),
-      shipmentMode: String(item.shipmentMode || ''),
-      colorCode: String(item.colorCode || ''),
-      colorName: String(item.colorName || ''),
-      destination: String(item.destination || ''),
-      packMethod: String(item.packMethod || ''),
-      scheduleNo: String(item.scheduleNo || ''),
-      planDelDate: String(item.planDelDate || ''),
-      ped: String(item.ped || ''),
-      weekNo: String(item.weekNo || ''),
-      coQty: Number.isFinite(Number(item.coQty)) ? Number(item.coQty) : 0,
-      cumSewInQty: Number.isFinite(Number(item.cumSewInQty)) ? Number(item.cumSewInQty) : 0,
-      cumSewOutQty: Number.isFinite(Number(item.cumSewOutQty)) ? Number(item.cumSewOutQty) : 0,
-      cumSewOutRejQty: Number.isFinite(Number(item.cumSewOutRejQty)) ? Number(item.cumSewOutRejQty) : 0,
-      cumCTNQty: Number.isFinite(Number(item.cumCTNQty)) ? Number(item.cumCTNQty) : 0,
-      statusText: String(item.statusText || ''),
-      deliveredQty: Number.isFinite(Number(item.deliveredQty)) ? Number(item.deliveredQty) : 0,
-      cifOffering: String(item.cifOffering || ''),
-      remark: String(item.remark || ''),
-    }));
-
     const now = Date.now();
-    const uploadId = `${now}_${Math.random().toString(36).slice(2, 7)}`;
+    const uploadId = now.toString();
 
-    // 1. Immediately update local state, timestamp ref, and localStorage
-    updateDashboardData(cleanedData, now, 'upload', uploadId);
+    // 1. Immediately store in localStorage
+    try {
+      localStorage.setItem('production_dashboard_data', JSON.stringify(parsedData));
+    } catch (e) {}
 
-    // 2. Send to Express Server API for local SSE broadcast
+    // 2. Persist to Firestore (Primary) - Using Chunked Strategy for large datasets
+    try {
+      const CHUNK_SIZE = 400; // Safe size to stay under 1MB per doc
+      const chunks: ProductionOrder[][] = [];
+      for (let i = 0; i < parsedData.length; i += CHUNK_SIZE) {
+        chunks.push(parsedData.slice(i, i + CHUNK_SIZE));
+      }
+
+      // First, clear old chunks to avoid orphans if count decreases
+      const existingDocs = await getDocs(collection(db, 'dashboardData'));
+      const batch = writeBatch(db);
+      existingDocs.forEach(d => {
+        if (d.id.startsWith('chunk_') || d.id === 'main') {
+          batch.delete(d.ref);
+        }
+      });
+      await batch.commit();
+
+      // Write new chunks
+      for (let i = 0; i < chunks.length; i++) {
+        await setDoc(doc(db, 'dashboardData', `chunk_${i}`), {
+          orders: chunks[i],
+          uploadId
+        });
+        setUploadProgress(prev => ({ ...prev, current: Math.min((i + 1) * CHUNK_SIZE, parsedData.length) }));
+      }
+
+      // Write meta doc last to trigger sync on other PCs
+      await setDoc(doc(db, 'dashboardData', 'meta'), {
+        chunkCount: chunks.length,
+        lastUpdated: now,
+        uploadId: uploadId
+      });
+
+      setLoadingState('idle');
+    } catch (err: any) {
+      console.error('Firestore Save Failed:', err);
+      setError(`Database Error: ${err.message || 'Failed to save data'}. Your data is still visible locally but might not sync to other PCs.`);
+      setLoadingState('idle');
+    }
+
+    // 3. Persist to Server API (Background Backup)
     fetch('/api/dashboard', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: cleanedData, lastUpdated: now, uploadId })
+      body: JSON.stringify({ data: parsedData, lastUpdated: now, uploadId })
     }).catch(() => {});
-
-    // 3. Persist to Firestore using Gzip single-doc compression (~90% fewer Read/Write units!),
-    //    falling back to safe 250-item chunks only if compressed payload exceeds 750KB.
-    try {
-      const compressedGzip = await compressOrdersToBase64(cleanedData);
-      if (compressedGzip && compressedGzip.length < 750000) {
-        await setDoc(doc(db, 'dashboard_v3', 'main'), {
-          compressedGzip,
-          format: 'gzip_v1',
-          chunkCount: 1,
-          totalCount: cleanedData.length,
-          lastUpdated: now,
-          uploadId,
-          serverUpdatedAt: serverTimestamp(),
-        });
-      } else {
-        const CHUNK_SIZE = 250;
-        const chunks: ProductionOrder[][] = [];
-        for (let i = 0; i < cleanedData.length; i += CHUNK_SIZE) {
-          chunks.push(cleanedData.slice(i, i + CHUNK_SIZE));
-        }
-
-        let syncedRows = 0;
-
-        // Write all part_1..part_N documents FIRST in parallel batches of 4
-        if (chunks.length > 1) {
-          for (let batchStart = 1; batchStart < chunks.length; batchStart += 4) {
-            const batchIndices = [];
-            for (let j = batchStart; j < Math.min(batchStart + 4, chunks.length); j++) {
-              batchIndices.push(j);
-            }
-            await Promise.all(
-              batchIndices.map(async (idx) => {
-                await setDoc(doc(db, 'dashboard_v3', `part_${idx}`), {
-                  orders: chunks[idx],
-                  uploadId
-                });
-                syncedRows += chunks[idx].length;
-              })
-            );
-            setUploadProgress({ current: syncedRows, total: cleanedData.length });
-          }
-        }
-
-        // Write main document LAST to atomically notify all connected PCs
-        await setDoc(doc(db, 'dashboard_v3', 'main'), {
-          orders: chunks[0] || [],
-          chunkCount: chunks.length,
-          totalCount: cleanedData.length,
-          lastUpdated: now,
-          uploadId: uploadId,
-          serverUpdatedAt: serverTimestamp(),
-        });
-      }
-
-      setUploadProgress({ current: cleanedData.length, total: cleanedData.length });
-      setSyncStatus('synced');
-      setSyncError(null);
-      setLoadingState('idle');
-    } catch (err: any) {
-      const msg = err?.message || String(err);
-      console.error('Firestore Upload Sync Error:', msg);
-      setSyncStatus('error');
-      const friendlyMsg = isFirestoreQuotaError(msg)
-        ? 'Firestore daily quota exceeded! Other PCs cannot receive this upload until quota resets.'
-        : `Cloud sync upload failed (${msg}). Other PCs may not see this update.`;
-      setSyncError(friendlyMsg);
-      setError(friendlyMsg);
-      setLoadingState('idle');
-    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1755,7 +1239,6 @@ export function Dashboard() {
           }
 
           const excelExtractedRemarks: Record<string, { text: string; updatedAt: number }> = {};
-          const excelExtractedCifOfferings: Record<string, { text: string; updatedAt: number }> = {};
 
           const parsedData: ProductionOrder[] = targetRows.map((row: any, index: number) => {
             const rawPlanDelDate = getVal(row, ['Plan Del Date', 'Plan Del Date ', 'plan del date']);
@@ -1820,15 +1303,7 @@ export function Dashboard() {
               }
             }
 
-            const rowCifOffering = String(getVal(row, ['CIF Offering', 'cif offering', 'CIF OFFERING', 'CIF', 'Cif Offering', 'CIF OFFERINGS', 'Cif']) || '').trim();
-            if (rowCifOffering) {
-              excelExtractedCifOfferings[finalId] = { text: rowCifOffering, updatedAt: Date.now() };
-              if (legacyIdStr) {
-                excelExtractedCifOfferings[legacyIdStr] = { text: rowCifOffering, updatedAt: Date.now() };
-              }
-            }
-
-            const rawPED = getVal(row, ['PED', 'ped', 'Ped', 'P.E.D.', 'P.E.D', 'PED Date', 'PED DATE', 'PED_DATE', 'PED-DATE', 'Plan Ex Del Date', 'Plan Ex-Del Date', 'PLAN EX DEL DATE', 'Plan Ex-Factory Date', 'Plan Ex Factory Date', 'Ex Del Date', 'Ex-Del Date', 'Plan Ex Del', 'PLAN EX DEL', 'AH']);
+            const rawPED = getVal(row, ['PED', 'ped', 'Ped', 'P.E.D.']);
             const parsedPEDDate = parseExcelDate(rawPED);
             let pedStr = '';
             if (parsedPEDDate) {
@@ -1870,30 +1345,9 @@ export function Dashboard() {
               cumCTNQty: getNum(row, ['Cum CTN Qty', 'CUM CTN QTY', 'Cum Ctn Qty']),
               statusText: statusText,
               deliveredQty: deliveredQty,
-              cifOffering: rowCifOffering,
               remark: rowRemark // Store it in the object as well
             };
           });
-
-          if (Object.keys(excelExtractedCifOfferings).length > 0) {
-            setCifOfferings(prev => {
-              const merged = { ...excelExtractedCifOfferings, ...prev };
-              try {
-                localStorage.setItem('production_dashboard_cif_offerings', JSON.stringify(merged));
-              } catch (e) {}
-              return merged;
-            });
-
-            const syncExtractedCif = async () => {
-              try {
-                const cifRef = doc(db, 'cif_offerings_v2', 'all');
-                await setDoc(cifRef, excelExtractedCifOfferings, { merge: true });
-              } catch (err) {
-                console.error("Batch CIF offerings sync failed", err);
-              }
-            };
-            syncExtractedCif();
-          }
 
           if (Object.keys(excelExtractedRemarks).length > 0) {
             setRemarks(prev => {
@@ -1904,11 +1358,25 @@ export function Dashboard() {
               return merged;
             });
 
-            // Sync extracted remarks to Firestore in background (Single-Doc Optimized)
+            // Sync extracted remarks to Firestore in background (Optimized)
             const syncExtracted = async () => {
               try {
+                // Store all in the single document for optimized sync
                 const remarksRef = doc(db, 'remarks_v2', 'all');
-                await setDoc(remarksRef, excelExtractedRemarks, { merge: true });
+                const snap = await getDoc(remarksRef);
+                const existing = snap.exists() ? snap.data() : {};
+                await setDoc(remarksRef, { ...existing, ...excelExtractedRemarks }, { merge: true });
+                
+                // Legacy support for older clients
+                const keys = Object.keys(excelExtractedRemarks);
+                for (let i = 0; i < Math.min(keys.length, 100); i += 500) { // Limit legacy sync to avoid quota hit
+                  const batch = writeBatch(db);
+                  const chunk = keys.slice(i, i + 500);
+                  chunk.forEach(id => {
+                    batch.set(doc(db, 'remarks', id), excelExtractedRemarks[id]);
+                  });
+                  await batch.commit();
+                }
               } catch (err) {
                 console.error("Batch remark sync failed", err);
               }
@@ -1918,6 +1386,8 @@ export function Dashboard() {
 
           parsedData.sort((a, b) => a.planDelDate.localeCompare(b.planDelDate));
 
+          setData(parsedData);
+          setLastUpdated(Date.now());
           persistDashboardData(parsedData);
           
           setSearchTerm('');
@@ -2050,16 +1520,12 @@ export function Dashboard() {
       const normalizedItemRemark = itemRemarkText.toUpperCase();
       const matchesRemark = filterRemark.length === 0 || filterRemark.some(r => r === normalizedItemRemark || (r === '(Empty)' && normalizedItemRemark === ''));
 
-      const itemCifText = getRowCifOffering(item, cifOfferings, normalizedCifOfferingsMap).text.trim();
-      const normalizedItemCif = itemCifText.toUpperCase();
-      const matchesCifOffering = filterCifOffering.length === 0 || filterCifOffering.some(c => c === normalizedItemCif || (c === '(Empty)' && normalizedItemCif === ''));
-
       const pedVal = (item.ped && item.ped.trim()) ? item.ped.trim() : '(Empty)';
       const matchesPED = filterPED.length === 0 || filterPED.includes(pedVal);
 
-      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesCifOffering && matchesPED;
+      return matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesPED;
     });
-  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, filterCifOffering, filterPED, remarks, cifOfferings, sixWeekWindow]);
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, filterPED, remarks, sixWeekWindow]);
 
   const rowVirtualizer = useVirtualizer({
     count: filteredItems.length,
@@ -2081,28 +1547,17 @@ export function Dashboard() {
     return Array.from(suggestions).sort();
   }, [remarks]);
 
-  const uniqueCifOfferingsList = useMemo(() => {
-    const suggestions = new Set<string>();
-    Object.values(cifOfferings).forEach((r: { text: string; updatedAt: number | null }) => {
-      if (r?.text && r.text.trim()) suggestions.add(r.text.trim().toUpperCase());
-    });
-    return Array.from(suggestions).sort();
-  }, [cifOfferings]);
-
   // Helper to get unique options based on current filters (excluding the filter itself)
-  const getUniqueOptions = useCallback((field: keyof ProductionOrder | 'remark' | 'cifOffering' | 'ped') => {
+  const getUniqueOptions = useCallback((field: keyof ProductionOrder | 'remark' | 'ped') => {
     if (!data) return [];
     const options = new Set<string>();
     
     data.forEach(item => {
       const itemRemarkText = getRowRemark(item, remarks, normalizedRemarksMap).text.trim();
-      const itemCifText = getRowCifOffering(item, cifOfferings, normalizedCifOfferingsMap).text.trim();
-
       const matchesSearch = searchTerm === '' || 
         Object.values(item).some(val => 
           String(val).toLowerCase().includes(searchTerm.toLowerCase())
-        ) || itemRemarkText.toLowerCase().includes(searchTerm.toLowerCase())
-        || itemCifText.toLowerCase().includes(searchTerm.toLowerCase());
+        ) || itemRemarkText.toLowerCase().includes(searchTerm.toLowerCase());
       
       const matchesBuyer = field === 'buyer' || filterBuyer.length === 0 || filterBuyer.includes(String(item.buyer));
       const matchesWeek = field === 'weekNo' || filterWeekNo.length === 0 || filterWeekNo.includes(String(item.weekNo));
@@ -2121,17 +1576,12 @@ export function Dashboard() {
       const normalizedItemRemark = itemRemarkText.toUpperCase();
       const matchesRemark = field === 'remark' || filterRemark.length === 0 || filterRemark.some(r => r === normalizedItemRemark || (r === '(Empty)' && normalizedItemRemark === ''));
 
-      const normalizedItemCif = itemCifText.toUpperCase();
-      const matchesCifOffering = field === 'cifOffering' || filterCifOffering.length === 0 || filterCifOffering.some(c => c === normalizedItemCif || (c === '(Empty)' && normalizedItemCif === ''));
-
       const pedVal = (item.ped && item.ped.trim()) ? item.ped.trim() : '(Empty)';
       const matchesPED = field === 'ped' || filterPED.length === 0 || filterPED.includes(pedVal);
 
-      if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesCifOffering && matchesPED) {
+      if (matchesSearch && matchesBuyer && matchesWeek && matchesStatus && matchesShipmentMode && matchesDestination && matchesPackMethod && matchesRemark && matchesPED) {
         if (field === 'remark') {
           options.add(normalizedItemRemark === '' ? '(Empty)' : normalizedItemRemark);
-        } else if (field === 'cifOffering') {
-          options.add(normalizedItemCif === '' ? '(Empty)' : normalizedItemCif);
         } else if (field === 'ped') {
           options.add(pedVal);
         } else {
@@ -2141,7 +1591,7 @@ export function Dashboard() {
     });
     
     return Array.from(options).filter(Boolean);
-  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, filterCifOffering, filterPED, remarks, cifOfferings]);
+  }, [data, searchTerm, filterBuyer, filterWeekNo, filterStatus, filterShipmentMode, filterDestination, filterPackMethod, filterRemark, filterPED, remarks]);
 
   // Unique values for dropdowns (strictly restricted to the 6-week window)
   const uniqueBuyers = useMemo(() => Array.from(new Set([...getUniqueOptions('buyer'), ...filterBuyer])).sort(), [getUniqueOptions, filterBuyer]);
@@ -2149,7 +1599,6 @@ export function Dashboard() {
   const uniqueShipmentModes = useMemo(() => Array.from(new Set([...getUniqueOptions('shipmentMode'), ...filterShipmentMode])).sort(), [getUniqueOptions, filterShipmentMode]);
   const uniqueDestinations = useMemo(() => Array.from(new Set([...getUniqueOptions('destination'), ...filterDestination])).sort(), [getUniqueOptions, filterDestination]);
   const uniquePackMethods = useMemo(() => Array.from(new Set([...getUniqueOptions('packMethod'), ...filterPackMethod])).sort(), [getUniqueOptions, filterPackMethod]);
-  const uniqueCifOfferings = useMemo(() => Array.from(new Set([...getUniqueOptions('cifOffering'), ...filterCifOffering])).sort(), [getUniqueOptions, filterCifOffering]);
   const uniqueRemarks = useMemo(() => Array.from(new Set([...getUniqueOptions('remark'), ...filterRemark])).sort(), [getUniqueOptions, filterRemark]);
   const uniquePEDs = useMemo(() => Array.from(new Set([...getUniqueOptions('ped'), ...filterPED])).sort(), [getUniqueOptions, filterPED]);
 
@@ -2217,7 +1666,6 @@ export function Dashboard() {
       'Cum CTN Qty': Number(item.cumCTNQty) || 0,
       'Status': item.statusText,
       'Remark': getRowRemark(item, remarks, normalizedRemarksMap).text,
-      'CIF Offering': getRowCifOffering(item, cifOfferings, normalizedCifOfferingsMap).text,
       'Production Lines': getRowProductionLine(item, productionLines).text,
       'Delivered Qty': Number(item.deliveredQty) || 0
     }));
@@ -2230,12 +1678,12 @@ export function Dashboard() {
       { wch: 15 }, { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 12 }, { wch: 20 }, { wch: 15 }, { wch: 15 }, 
       { wch: 15 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, 
-      { wch: 15 }, { wch: 30 }, { wch: 25 }, { wch: 20 }, { wch: 15 }
+      { wch: 15 }, { wch: 30 }, { wch: 20 }, { wch: 15 }
     ];
     worksheet['!cols'] = colWidths;
 
     XLSX.writeFile(workbook, `Production_Data_${new Date().toISOString().split('T')[0]}.xlsx`);
-  }, [filteredItems, remarks, cifOfferings]);
+  }, [filteredItems, remarks]);
 
   if (!data) {
     return (
@@ -2353,7 +1801,7 @@ export function Dashboard() {
                 Powered by DILEEPA WICKRAMASINGHE
               </span>
             </div>
-            <div className="text-slate-500 mt-1 text-xs md:text-sm flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+            <p className="text-slate-500 mt-1 text-xs md:text-sm flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
               <span>Item-level fulfillment details for the next 6 weeks.</span>
               {lastUpdated && (
                 <span className="text-slate-600 font-medium flex items-center gap-1.5 truncate">
@@ -2362,41 +1810,12 @@ export function Dashboard() {
                   OrderBook Updated: {new Date(lastUpdated).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
                 </span>
               )}
-              <span className="font-medium flex items-center gap-1.5 truncate">
+              <span className="text-slate-400 font-medium flex items-center gap-1.5 truncate">
                 <span className="hidden sm:inline text-slate-300">•</span>
-                {syncStatus === 'error' ? (
-                  <span className="text-rose-600 flex items-center gap-1.5">
-                    <span className="w-2 h-2 bg-rose-500 rounded-full inline-block"></span>
-                    Cloud Sync Error
-                  </span>
-                ) : syncStatus === 'syncing' || syncStatus === 'connecting' ? (
-                  <span className="text-indigo-600 flex items-center gap-1.5">
-                    <Loader2 className="w-3 h-3 animate-spin inline-block" />
-                    {syncStatus === 'connecting' ? 'Connecting Cloud...' : 'Syncing Cloud...'}
-                  </span>
-                ) : (
-                  <span className="text-slate-400 flex items-center gap-1.5">
-                    <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse inline-block"></span>
-                    Cloud Sync Active
-                  </span>
-                )}
-                <button
-                  onClick={handleManualCloudSync}
-                  disabled={syncStatus === 'syncing'}
-                  title="Force refresh latest Orderbook from Cloud"
-                  className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-indigo-50 rounded border border-slate-200 transition-colors disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3 h-3 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
-                  Sync
-                </button>
+                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                Cloud Sync Active
               </span>
-            </div>
-            {(syncError || error) && (
-              <div className="mt-2 px-3 py-2 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700">
-                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
-                <span>{syncError || error}</span>
-              </div>
-            )}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 md:gap-3">
             <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 w-full sm:w-auto">
@@ -2518,13 +1937,6 @@ export function Dashboard() {
               />
               
               <MultiSelectDropdown 
-                label="CIF Offerings"
-                options={uniqueCifOfferings}
-                selectedValues={filterCifOffering}
-                onChange={setFilterCifOffering}
-              />
-
-              <MultiSelectDropdown 
                 label="Remarks"
                 options={uniqueRemarks}
                 selectedValues={filterRemark}
@@ -2542,7 +1954,7 @@ export function Dashboard() {
             <div className="grid grid-cols-3 sm:flex gap-2 w-full sm:w-auto">
               <button 
                 onClick={() => {
-                  setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]); setFilterCifOffering([]); setFilterRemark([]); setFilterPED([]);
+                  setSearchTerm(''); setFilterBuyer([]); setFilterWeekNo([]); setFilterStatus([]); setFilterShipmentMode([]); setFilterDestination([]); setFilterPackMethod([]); setFilterRemark([]); setFilterPED([]);
                 }}
                 className="px-2 py-2 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-medium transition-colors whitespace-nowrap"
               >
@@ -2573,7 +1985,7 @@ export function Dashboard() {
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
           <div ref={tableContainerRef} className="overflow-auto max-h-[75vh]">
             {!isMobile ? (
-              <table className="w-full min-w-[2490px] table-fixed text-sm text-left border-collapse relative">
+              <table className="w-full min-w-[2290px] table-fixed text-sm text-left border-collapse relative">
                 <colgroup>
                   {TABLE_COLUMN_WIDTHS.map((width, idx) => (
                     <col key={idx} style={{ width }} />
@@ -2599,7 +2011,6 @@ export function Dashboard() {
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right bg-slate-50 truncate">Cum CTN Qty</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-center truncate">Status</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Remark</th>
-                    <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">CIF Offering</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap truncate">Production Lines</th>
                     <th className="px-3 py-3 border border-slate-200 whitespace-nowrap text-right truncate">Delivered Qty</th>
                   </tr>
@@ -2607,7 +2018,7 @@ export function Dashboard() {
                 <tbody>
                   {paddingTop > 0 && (
                     <tr className="border-0 p-0 m-0">
-                      <td colSpan={21} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                      <td colSpan={20} style={{ height: `${paddingTop}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                     </tr>
                   )}
                   {virtualRows.length > 0 ? (
@@ -2659,14 +2070,6 @@ export function Dashboard() {
                             />
                           </td>
                           <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
-                            <CifOfferingInput 
-                              initialValue={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).text}
-                              updatedAt={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).updatedAt}
-                              rowId={row.id}
-                              onSave={handleCifOfferingChange}
-                            />
-                          </td>
-                          <td className="px-3 py-2 border-r border-b border-slate-200 whitespace-nowrap truncate">
                             <ProductionLineInput 
                               initialValue={getRowProductionLine(row, productionLines).text}
                               rowId={row.id}
@@ -2679,14 +2082,14 @@ export function Dashboard() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={21} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
+                      <td colSpan={20} className="px-6 py-12 text-center text-slate-500 bg-slate-50">
                         No orders found matching the current filters.
                       </td>
                     </tr>
                   )}
                   {paddingBottom > 0 && (
                     <tr className="border-0 p-0 m-0">
-                      <td colSpan={21} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
+                      <td colSpan={20} style={{ height: `${paddingBottom}px`, padding: 0, border: 0, margin: 0, lineHeight: 0 }} />
                     </tr>
                   )}
                 </tbody>
@@ -2766,12 +2169,6 @@ export function Dashboard() {
                             rowId={row.id}
                             onSave={handleRemarkChange}
                           />
-                          <CifOfferingInput 
-                            initialValue={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).text}
-                            updatedAt={getRowCifOffering(row, cifOfferings, normalizedCifOfferingsMap).updatedAt}
-                            rowId={row.id}
-                            onSave={handleCifOfferingChange}
-                          />
                           <ProductionLineInput 
                             initialValue={getRowProductionLine(row, productionLines).text}
                             rowId={row.id}
@@ -2805,7 +2202,6 @@ export function Dashboard() {
         onClose={() => setShowPrintModal(false)}
         data={filteredItems.length > 0 ? filteredItems : (data || [])}
         remarks={remarks}
-        cifOfferings={cifOfferings}
         productionLines={productionLines}
         activeFilters={{
           search: searchTerm,
@@ -2815,7 +2211,6 @@ export function Dashboard() {
           shipmentModes: filterShipmentMode,
           destinations: filterDestination,
           packMethods: filterPackMethod,
-          cifOfferingsFilter: filterCifOffering,
           remarksFilter: filterRemark,
           peds: filterPED
         }}
@@ -2880,7 +2275,11 @@ export function Dashboard() {
               const dashRes = await fetch('/api/dashboard');
               const serverDash = await safeJson(dashRes);
               if (serverDash?.data && Array.isArray(serverDash.data) && serverDash.data.length > 0) {
-                updateDashboardData(serverDash.data, serverDash.lastUpdated || Date.now(), 'manual_sync', serverDash.uploadId);
+                setData(serverDash.data);
+                if (serverDash.lastUpdated) setLastUpdated(serverDash.lastUpdated);
+                try {
+                  localStorage.setItem('production_dashboard_data', JSON.stringify(serverDash.data));
+                } catch (e) {}
               }
 
               setTimeout(() => setRecoveryMessage(null), 6000);
